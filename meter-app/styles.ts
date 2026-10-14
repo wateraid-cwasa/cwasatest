@@ -307,6 +307,26 @@ export const styles = StyleSheet.create({
     paddingVertical: 14,
     gap: 6,
   },
+  webServiceRequestHeadingCompact: {
+    flexDirection: 'column',
+    alignItems: 'stretch',
+  },
+  webServiceRequestControls: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 10,
+    flexShrink: 0,
+  },
+  webServiceRequestControlsCompact: {
+    width: '100%',
+    flexDirection: 'column',
+    alignItems: 'stretch',
+    gap: 8,
+  },
+  webServiceRequestRecordCountCompact: {
+    alignSelf: 'flex-end',
+  },
   webPanelHeadingText: {
     flex: 1,
     minWidth: 0,
@@ -571,6 +591,11 @@ export const styles = StyleSheet.create({
     paddingVertical: 18,
     gap: 12,
   },
+  webServiceRequestHeadingLayer: {
+    position: 'relative',
+    zIndex: 20,
+    elevation: 20,
+  },
   webPanelTitle: {
     color: '#151434',
     fontFamily: 'RBNylo',
@@ -581,6 +606,26 @@ export const styles = StyleSheet.create({
     fontFamily: 'Open Sans',
     fontSize: 13,
     marginTop: 4,
+  },
+  serviceRequestEmptyState: {
+    minHeight: 144,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 18,
+    paddingVertical: 28,
+    borderTopWidth: 1,
+    borderColor: '#EEF0F5',
+  },
+  serviceRequestEmptyIcon: {
+    color: '#8A93A8',
+    fontSize: 26,
+    marginBottom: 8,
+  },
+  serviceRequestEmptyText: {
+    color: '#3E4660',
+    fontFamily: 'Open Sans Bold',
+    fontSize: 14,
+    textAlign: 'center',
   },
   webRecordCount: {
     color: '#5B6275',
@@ -2575,9 +2620,32 @@ export const styles = StyleSheet.create({
     gap: 10,
     marginTop: 10,
   },
+  newReadingPhotoActionsCompact: {
+    flexDirection: 'column',
+    flexWrap: 'nowrap',
+  },
+  newReadingPhotoActionButtonCompact: {
+    flex: 0,
+    width: '100%',
+    minWidth: 0,
+  },
   newReadingPhotoActionButton: {
     flex: 1,
     minWidth: 140,
+    minHeight: 48,
+    paddingHorizontal: 12,
+    cursor: 'pointer',
+  },
+  newReadingPhotoButtonText: {
+    fontSize: 14,
+    lineHeight: 20,
+    textAlign: 'center',
+  },
+  newReadingPhotoButtonPressed: {
+    opacity: 0.72,
+  },
+  newReadingPhotoRequiredHint: {
+    marginTop: 8,
   },
   newReadingPhotoOverlay: {
     position: 'absolute',
@@ -2915,6 +2983,13 @@ export const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 12,
     paddingTop: 8,
+  },
+  readingFilterOptions: {
+    maxHeight: 220,
+    borderWidth: 1,
+    borderColor: '#DDE3EF',
+    borderRadius: 8,
+    overflow: 'hidden',
   },
   filterResetButton: {
     flex: 1,

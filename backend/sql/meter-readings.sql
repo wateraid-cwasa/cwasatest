@@ -14,6 +14,7 @@
         CONSTRAINT [DF_App_MeterReadings_ReadingId] DEFAULT NEWSEQUENTIALID(),
       [ReaderCode] NVARCHAR(255) NOT NULL,
       [AccountNo] NVARCHAR(255) NOT NULL,
+      [WardNo] NVARCHAR(255) NULL,
       [MeterNo] NVARCHAR(255) NULL,
       [CustomerName] NVARCHAR(255) NOT NULL,
       [CurrentBill] DECIMAL(12, 2) NOT NULL,
@@ -37,6 +38,12 @@
 
     CREATE INDEX [IX_App_MeterReadings_ReaderCode_CreatedAt]
       ON [app].[MeterReadings] ([ReaderCode], [CreatedAt] DESC);
+  END;
+  GO
+
+  IF COL_LENGTH(N'app.MeterReadings', N'WardNo') IS NULL
+  BEGIN
+    ALTER TABLE [app].[MeterReadings] ADD [WardNo] NVARCHAR(255) NULL;
   END;
   GO
 

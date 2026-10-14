@@ -1,0 +1,40 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Expo Web Preview",
+			"type": "shell",
+			"command": "npm",
+			"args": [
+				"--prefix",
+				"meter-app",
+				"run",
+				"web",
+				"--",
+				"--port",
+				"8082"
+			],
+			"isBackground": true,
+			"problemMatcher": []
+		},
+		{
+			"label": "Service Request Filter Typecheck",
+			"type": "shell",
+			"command": "npm",
+			"args": [
+				"--prefix",
+				"meter-app",
+				"exec",
+				"--",
+				"tsc",
+				"--noEmit",
+				"-p",
+				"meter-app/tsconfig.json"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			]
+		}
+	]
+}

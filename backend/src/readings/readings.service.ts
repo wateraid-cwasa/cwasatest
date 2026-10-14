@@ -39,6 +39,7 @@ export type ReadingSubmissionRecord = {
   id: string;
   readerCode: string;
   accountNo: string;
+  wardNo: string | null;
   meterNo: string | null;
   customerName: string;
   currentBill: string;
@@ -125,6 +126,7 @@ export class ReadingsService {
       INSERT INTO [app].[MeterReadings] (
         [ReaderCode],
         [AccountNo],
+        [WardNo],
         [MeterNo],
         [CustomerName],
         [CurrentBill],
@@ -139,6 +141,7 @@ export class ReadingsService {
       VALUES (
         ${user.readerCode},
         ${customer.accountNo},
+        ${customer.wardNo},
         ${customer.meterNo},
         ${customer.customerName},
         CONVERT(decimal(12, 2), ${input.currentBill}),
@@ -168,6 +171,7 @@ export class ReadingsService {
         CONVERT(nvarchar(36), [ReadingId]) AS [id],
         [ReaderCode] AS [readerCode],
         [AccountNo] AS [accountNo],
+        [WardNo] AS [wardNo],
         [MeterNo] AS [meterNo],
         [CustomerName] AS [customerName],
         CONVERT(nvarchar(50), [CurrentBill]) AS [currentBill],
@@ -192,6 +196,7 @@ export class ReadingsService {
         CONVERT(nvarchar(36), [ReadingId]) AS [id],
         [ReaderCode] AS [readerCode],
         [AccountNo] AS [accountNo],
+        [WardNo] AS [wardNo],
         [MeterNo] AS [meterNo],
         [CustomerName] AS [customerName],
         CONVERT(nvarchar(50), [CurrentBill]) AS [currentBill],

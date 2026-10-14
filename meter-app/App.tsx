@@ -41,6 +41,7 @@ import { useDispatch, useSelector } from 'react-redux';
 import {
   Alert,
   Image,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -56,10 +57,12 @@ import { styles } from './styles';
 
 type ScreenName = 'splash' | 'signin' | 'admin' | 'list' | 'completed' | 'detail' | 'camera' | 'enter' | 'review' | 'saved' | 'profile' | 'sr' | 'srnew' | 'srdone' | 'newReading';
 type DetailTab = 'bill' | 'history';
+type BillApprovalFilter = 'all' | 'approved' | 'approvalRequired';
 type CompletedReading = {
   id: string;
   customer: string;
   account: string;
+  wardNo: string | null;
   meter: string;
   current: string;
   date: string;
@@ -75,6 +78,7 @@ type CustomerRecord = {
   dueLabel: string;
   color: string;
   detailAddress?: string;
+  wardNo?: string | null;
   phone?: string;
   customerType?: string;
   meterType?: string;
@@ -95,6 +99,7 @@ function toSubmittedReadingCustomer(record: MeterReadingSubmission): CustomerRec
     name: record.customerName,
     addr: `${record.readerCode} · ${new Date(record.createdAt).toLocaleString()}`,
     acc: record.accountNo,
+    wardNo: record.wardNo,
     meter: record.meterNo || '—',
     amt: `৳${bill.toLocaleString('en-US', { minimumFractionDigits: 2 })}`,
     dueLabel: 'Submitted',
@@ -109,6 +114,7 @@ function toCompletedReading(record: MeterReadingSubmission): CompletedReading {
     id: record.id,
     customer: record.customerName,
     account: record.accountNo,
+    wardNo: record.wardNo,
     meter: record.meterNo || '—',
     current: `৳${Number(record.currentBill).toLocaleString('en-US', { minimumFractionDigits: 2 })}`,
     date: new Date(record.createdAt).toLocaleString(),
@@ -117,6 +123,7 @@ function toCompletedReading(record: MeterReadingSubmission): CompletedReading {
 
 const SERVICE_PROBLEMS = ['Meter defective', 'Meter stopped', 'Glass broken', 'Other'];
 const SERVICE_REQUEST_FILTERS = ['all', 'Pending', 'In progress', 'Completed'] as const;
+const NO_WARD_FILTER = '__no_ward__';
 
 const isWeb = Platform.OS === 'web';
 
@@ -157,6 +164,12 @@ export default function App() {
   const [completedReadingsError, setCompletedReadingsError] = useState('');
   const [readingDashboardTab, setReadingDashboardTab] = useState<'pending' | 'completed'>('pending');
   const [searchText, setSearchText] = useState('');
+  const [readingFilterOpen, setReadingFilterOpen] = useState(false);
+  const [wardOptionOpen, setWardOptionOpen] = useState(false);
+  const [draftWardFilter, setDraftWardFilter] = useState('all');
+  const [wardFilter, setWardFilter] = useState('all');
+  const [draftBillApprovalFilter, setDraftBillApprovalFilter] = useState<BillApprovalFilter>('all');
+  const [billApprovalFilter, setBillApprovalFilter] = useState<BillApprovalFilter>('all');
   const [serviceMenuOpen, setServiceMenuOpen] = useState(false);
   const [problemMenuOpen, setProblemMenuOpen] = useState(false);
   const [serviceProblem, setServiceProblem] = useState(SERVICE_PROBLEMS[0]);
@@ -183,6 +196,7 @@ export default function App() {
   const [serviceRequestsError, setServiceRequestsError] = useState('');
   const [serviceRequestsRefreshKey, setServiceRequestsRefreshKey] = useState(0);
   const [serviceRequestFilter, setServiceRequestFilter] = useState<'all' | ServiceRequestStatus>('all');
+  const [draftServiceRequestFilter, setDraftServiceRequestFilter] = useState<'all' | ServiceRequestStatus>('all');
   const [serviceRequestFilterOpen, setServiceRequestFilterOpen] = useState(false);
   const [serviceRequestSubmitting, setServiceRequestSubmitting] = useState(false);
   const [serviceRequestError, setServiceRequestError] = useState('');
@@ -289,14 +303,10 @@ export default function App() {
           );
         }
       })
-      .catch((error: unknown) => {
+      .catch(() => {
         if (!active) return;
         setAssignedCustomers([]);
-        setAssignedCustomersError(
-          error instanceof ApiRequestError && error.status === 403
-            ? 'This account is not authorized to view submitted readings.'
-            : 'Could not load readings submitted by your RICODE. Check the API/database setup and retry.',
-        );
+        setAssignedCustomersError('');
       })
       .finally(() => {
         if (active) setAssignedCustomersLoading(false);
@@ -304,7 +314,7 @@ export default function App() {
     return () => {
       active = false;
     };
-  }, [assignedCustomersRefreshKey, authUser?.readerCode, authUser?.role, screen]);
+  }, [assignedCustomersRefreshKey, authUser?.readerCode, authUser?.role, readingDashboardTab, screen]);
 
   useEffect(() => {
     const showingDashboardCompletedTab = isWeb && screen === 'list' && readingDashboardTab === 'completed';
@@ -319,7 +329,7 @@ export default function App() {
       .catch(() => {
         if (active) {
           setCompletedReadings([]);
-          setCompletedReadingsError('Could not load completed readings. Check the API/database setup and retry.');
+          setCompletedReadingsError('');
         }
       })
       .finally(() => {
@@ -342,7 +352,7 @@ export default function App() {
       .catch(() => {
         if (!active) return;
         setServiceRequests([]);
-        setServiceRequestsError(translations.serviceRequestLoadFailed);
+        setServiceRequestsError('');
       })
       .finally(() => {
         if (active) setServiceRequestsLoading(false);
@@ -354,30 +364,202 @@ export default function App() {
 
   const filteredCustomers = useMemo(() => {
     const term = searchText.trim().toLowerCase();
-    if (!term) return assignedCustomers;
     return assignedCustomers.filter((customer) => {
+      const matchesApproval = billApprovalFilter !== 'approved';
+      if (!matchesApproval) return false;
+      const matchesWard = wardFilter === 'all'
+        || (wardFilter === NO_WARD_FILTER ? !customer.wardNo : customer.wardNo === wardFilter);
+      if (!matchesWard) return false;
+      if (!term) return true;
       return [
         customer.name,
         customer.addr,
         customer.acc,
         customer.meter,
+        customer.wardNo ?? '',
       ]
         .join(' ')
         .toLowerCase()
         .includes(term);
     });
-  }, [assignedCustomers, searchText]);
+  }, [assignedCustomers, billApprovalFilter, searchText, wardFilter]);
 
   const filteredCompletedReadings = useMemo(() => {
     const term = searchText.trim().toLowerCase();
-    if (!term) return completedReadings;
-    return completedReadings.filter((record) =>
-      [record.customer, record.account, record.meter, record.current, record.date]
+    return completedReadings.filter((record) => {
+      const matchesApproval = billApprovalFilter !== 'approvalRequired';
+      if (!matchesApproval) return false;
+      const matchesWard = wardFilter === 'all'
+        || (wardFilter === NO_WARD_FILTER ? !record.wardNo : record.wardNo === wardFilter);
+      if (!matchesWard) return false;
+      if (!term) return true;
+      return [record.customer, record.account, record.meter, record.current, record.date, record.wardNo ?? '']
         .join(' ')
         .toLowerCase()
-        .includes(term),
-    );
-  }, [completedReadings, searchText]);
+        .includes(term);
+    });
+  }, [billApprovalFilter, completedReadings, searchText, wardFilter]);
+
+  const availableWardNumbers = useMemo(() => {
+    const wardNumbers = new Set<string>();
+    for (const wardNo of [
+      ...assignedCustomers.map((customer) => customer.wardNo),
+      ...completedReadings.map((record) => record.wardNo),
+    ]) {
+      if (wardNo?.trim()) wardNumbers.add(wardNo.trim());
+    }
+    return Array.from(wardNumbers).sort((left, right) => left.localeCompare(right, undefined, { numeric: true }));
+  }, [assignedCustomers, completedReadings]);
+
+  const getWardFilterLabel = (value: string) => {
+    if (value === 'all') return translations.allWards;
+    if (value === NO_WARD_FILTER) return translations.wardNotAvailable;
+    return `${translations.ward} ${value}`;
+  };
+  const activeReadingFilterCount = Number(wardFilter !== 'all') + Number(billApprovalFilter !== 'all');
+
+  const getBillApprovalFilterLabel = (value: BillApprovalFilter) => {
+    if (value === 'approved') return translations.approvedBills;
+    if (value === 'approvalRequired') return translations.approvalRequired;
+    return translations.allBills;
+  };
+
+  const getReadingEmptyMessage = (recordCount: number, emptyMessage: string) =>
+    recordCount === 0 && wardFilter === 'all' && billApprovalFilter === 'all' && !searchText.trim()
+      ? emptyMessage
+      : translations.noFilteredResults;
+
+  const renderReadingFilterPanel = () => (
+    <Modal
+      animationType="fade"
+      onRequestClose={() => {
+        setReadingFilterOpen(false);
+        setWardOptionOpen(false);
+      }}
+      transparent
+      visible={readingFilterOpen}
+    >
+      <View style={styles.filterModalOverlay}>
+        <Pressable
+          accessibilityLabel={translations.closeFilter}
+          accessibilityRole="button"
+          onPress={() => {
+            setReadingFilterOpen(false);
+            setWardOptionOpen(false);
+          }}
+          style={styles.filterModalScrim}
+        />
+        <View style={[styles.filterModalCard, isWeb && styles.filterModalCardWeb]}>
+          <View style={styles.filterModalHeader}>
+            <View style={styles.filterModalTitleRow}>
+              <Text style={styles.filterModalTitle}>{translations.filter}</Text>
+            </View>
+            <Pressable
+              accessibilityLabel={translations.closeFilter}
+              accessibilityRole="button"
+              onPress={() => {
+                setReadingFilterOpen(false);
+                setWardOptionOpen(false);
+              }}
+              style={styles.filterModalClose}
+            >
+              <Text style={styles.filterModalCloseText}>×</Text>
+            </Pressable>
+          </View>
+
+          <View style={styles.filterSection}>
+            <Text style={styles.filterSectionTitle}>{translations.billApprovalType}</Text>
+            <View style={styles.filterOptionsList}>
+              {(['all', 'approved', 'approvalRequired'] as const).map((option) => {
+                const selected = draftBillApprovalFilter === option;
+                return (
+                  <Pressable
+                    key={option}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected }}
+                    onPress={() => setDraftBillApprovalFilter(option)}
+                    style={[styles.filterOptionItem, selected && styles.filterOptionItemActive]}
+                  >
+                    <View style={styles.filterOptionLeft}>
+                      <View style={[styles.filterRadioCircle, selected && styles.filterRadioCircleActive]}>
+                        {selected ? <View style={styles.filterRadioDot} /> : null}
+                      </View>
+                      <Text style={[styles.filterOptionLabel, selected && styles.filterOptionLabelActive]}>
+                        {getBillApprovalFilterLabel(option)}
+                      </Text>
+                    </View>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
+
+          <View style={styles.filterSection}>
+            <Text style={styles.filterSectionTitle}>{translations.wardNumber}</Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityState={{ expanded: wardOptionOpen }}
+              onPress={() => setWardOptionOpen((open) => !open)}
+              style={styles.problemSelect}
+            >
+              <Text style={styles.problemSelectText}>{getWardFilterLabel(draftWardFilter)}</Text>
+              <Text style={styles.problemSelectText}>{wardOptionOpen ? '▴' : '▾'}</Text>
+            </Pressable>
+            {wardOptionOpen ? (
+              <ScrollView style={styles.readingFilterOptions} nestedScrollEnabled>
+                {[
+                  { value: 'all', label: translations.allWards },
+                  ...availableWardNumbers.map((wardNo) => ({ value: wardNo, label: `${translations.ward} ${wardNo}` })),
+                  ...([...assignedCustomers, ...completedReadings].some((record) => !record.wardNo)
+                    ? [{ value: NO_WARD_FILTER, label: translations.wardNotAvailable }]
+                    : []),
+                ].map((option) => (
+                  <Pressable
+                    key={option.value}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: draftWardFilter === option.value }}
+                    onPress={() => {
+                      setDraftWardFilter(option.value);
+                      setWardOptionOpen(false);
+                    }}
+                    style={styles.problemOption}
+                  >
+                    <Text style={styles.problemOptionText}>{option.label}</Text>
+                  </Pressable>
+                ))}
+              </ScrollView>
+            ) : null}
+          </View>
+
+          <View style={styles.filterModalFooter}>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => {
+                setDraftWardFilter('all');
+                setDraftBillApprovalFilter('all');
+                setWardOptionOpen(false);
+              }}
+              style={styles.filterResetButton}
+            >
+              <Text style={styles.filterResetButtonText}>{translations.reset}</Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => {
+                setWardFilter(draftWardFilter);
+                setBillApprovalFilter(draftBillApprovalFilter);
+                setReadingFilterOpen(false);
+                setWardOptionOpen(false);
+              }}
+              style={styles.filterApplyButton}
+            >
+              <Text style={styles.filterApplyButtonText}>{translations.apply}</Text>
+            </Pressable>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
   const currentReadingValue = Number(reading);
   const previousReadingValue = Number(
     selectedCustomer.previousReading?.replace(/,/g, '')
@@ -973,12 +1155,12 @@ export default function App() {
         </View>
         <Pressable onPress={openProfile} style={styles.accountMenuItem}>
           <Text style={styles.accountMenuIcon}>◉</Text>
-          <Text style={styles.accountMenuText}>Profile</Text>
+          <Text style={styles.accountMenuText}>{translations.profile}</Text>
           <Text style={styles.accountMenuChevron}>›</Text>
         </Pressable>
         <View style={styles.accountMenuDivider} />
         <View style={styles.accountLanguageRow}>
-          <Text style={styles.accountMenuText}>Language</Text>
+          <Text style={styles.accountMenuText}>{translations.language}</Text>
           <Pressable
             accessibilityRole="button"
             onPress={() => setLanguage((current) => (current === 'en' ? 'bn' : 'en'))}
@@ -990,7 +1172,7 @@ export default function App() {
         <View style={styles.accountDrawerSpacer} />
         <Pressable onPress={logOut} style={styles.accountMenuItem}>
           <Text style={styles.accountMenuIconLogout}>↪</Text>
-          <Text style={styles.accountMenuLogoutText}>Log Out</Text>
+          <Text style={styles.accountMenuLogoutText}>{translations.logOut}</Text>
         </Pressable>
       </View>
     </View>
@@ -1096,10 +1278,6 @@ export default function App() {
         </View>
       </View>
 
-      <View style={styles.syncBar}>
-        <Text style={styles.syncText}>⟳ {translations.lastSync}</Text>
-      </View>
-
       <View style={styles.tabRow}>
         <Pressable onPress={() => setScreen('list')} style={screen === 'list' ? styles.tabItemActive : styles.tabItemInactive}>
           <Text style={screen === 'list' ? styles.tabTextActive : styles.tabTextInactive}>{translations.pendingReadings} {assignedCustomers.length}</Text>
@@ -1120,8 +1298,23 @@ export default function App() {
             style={styles.searchInput}
           />
         </View>
-
+        <Pressable
+          accessibilityRole="button"
+          accessibilityState={{ expanded: readingFilterOpen }}
+          onPress={() => {
+            if (!readingFilterOpen) setDraftWardFilter(wardFilter);
+            if (!readingFilterOpen) setDraftBillApprovalFilter(billApprovalFilter);
+            setWardOptionOpen(false);
+            setReadingFilterOpen((open) => !open);
+          }}
+          style={[styles.filterTriggerButton, wardFilter !== 'all' && styles.filterTriggerButtonActive]}
+        >
+          <Text style={[styles.filterTriggerText, wardFilter !== 'all' && styles.filterTriggerTextActive]}>
+            {translations.filter}{activeReadingFilterCount > 0 ? ` · ${activeReadingFilterCount}` : ''}
+          </Text>
+        </Pressable>
       </View>
+      {renderReadingFilterPanel()}
 
       <ScrollView style={styles.customerList} contentContainerStyle={styles.customerListContent}>
         {assignedCustomersLoading ? (
@@ -1139,9 +1332,7 @@ export default function App() {
           <View style={styles.emptyFilteredBox}>
             <Text style={styles.emptyFilteredIcon}>📋</Text>
             <Text style={styles.emptyFilteredTitle}>
-              {assignedCustomers.length === 0
-                ? translations.noPendingReadings
-                : translations.noSearchResults}
+              {getReadingEmptyMessage(assignedCustomers.length, translations.noPendingReadings)}
             </Text>
           </View>
         ) : (
@@ -1165,6 +1356,7 @@ export default function App() {
                   </View>
                   <Text style={styles.customerAddress}>{customer.addr}</Text>
                   <Text style={styles.customerMeta}>{translations.account} {customer.acc} · {translations.meter} {customer.meter}</Text>
+                  {customer.wardNo ? <Text style={styles.customerMeta}>{translations.ward} {customer.wardNo}</Text> : null}
                 </View>
                 <View style={styles.customerRightColumn}>
                   <Text style={[styles.customerAmount, { color: customer.color }]}>{customer.amt}</Text>
@@ -1324,6 +1516,89 @@ export default function App() {
     return translations.completedServiceRequests;
   };
 
+  const openServiceRequestFilter = () => {
+    setDraftServiceRequestFilter(serviceRequestFilter);
+    setServiceRequestFilterOpen(true);
+  };
+
+  const closeServiceRequestFilter = () => setServiceRequestFilterOpen(false);
+
+  const renderServiceRequestFilterModal = () => (
+    <Modal
+      animationType="fade"
+      onRequestClose={closeServiceRequestFilter}
+      transparent
+      visible={serviceRequestFilterOpen}
+    >
+      <View style={styles.filterModalOverlay}>
+        <Pressable
+          accessibilityLabel={translations.closeFilter}
+          accessibilityRole="button"
+          onPress={closeServiceRequestFilter}
+          style={styles.filterModalScrim}
+        />
+        <View style={[styles.filterModalCard, isWeb && styles.filterModalCardWeb]}>
+          <View style={styles.filterModalHeader}>
+            <Text style={styles.filterModalTitle}>{translations.filter}</Text>
+            <Pressable
+              accessibilityLabel={translations.closeFilter}
+              accessibilityRole="button"
+              onPress={closeServiceRequestFilter}
+              style={styles.filterModalClose}
+            >
+              <Text style={styles.filterModalCloseText}>×</Text>
+            </Pressable>
+          </View>
+          <View style={styles.filterOptionsList}>
+            {SERVICE_REQUEST_FILTERS.map((filter) => {
+              const selected = draftServiceRequestFilter === filter;
+              return (
+                <Pressable
+                  key={filter}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected }}
+                  onPress={() => setDraftServiceRequestFilter(filter)}
+                  style={[styles.filterOptionItem, selected && styles.filterOptionItemActive]}
+                >
+                  <View style={styles.filterOptionLeft}>
+                    <View style={[styles.filterRadioCircle, selected && styles.filterRadioCircleActive]}>
+                      {selected ? <View style={styles.filterRadioDot} /> : null}
+                    </View>
+                    <Text style={[styles.filterOptionLabel, selected && styles.filterOptionLabelActive]}>
+                      {getServiceRequestFilterLabel(filter)}
+                    </Text>
+                  </View>
+                </Pressable>
+              );
+            })}
+          </View>
+          <View style={styles.filterModalFooter}>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => {
+                setDraftServiceRequestFilter('all');
+                setServiceRequestFilter('all');
+              }}
+              style={styles.filterResetButton}
+            >
+              <Text style={styles.filterResetButtonText}>{translations.reset}</Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => {
+                setServiceRequestFilter(draftServiceRequestFilter);
+                closeServiceRequestFilter();
+              }}
+              style={styles.filterApplyButton}
+            >
+              <Text style={styles.filterApplyButtonText}>{translations.apply}</Text>
+            </Pressable>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+
   const getServiceRequestStatusLabel = (status: ServiceRequestStatus) => {
     if (status === 'Pending') return translations.serviceStatusPending;
     if (status === 'In progress') return translations.serviceStatusInProgress;
@@ -1337,6 +1612,13 @@ export default function App() {
     return translations.serviceProblemOther;
   };
 
+  const renderServiceRequestsEmptyState = () => (
+    <View style={styles.serviceRequestEmptyState}>
+      <Text style={styles.serviceRequestEmptyIcon}>▤</Text>
+      <Text style={styles.serviceRequestEmptyText}>{translations.noServiceRequests}</Text>
+    </View>
+  );
+
   const renderServiceRequestList = () => (
     <View style={styles.screenShellDark}>
       <View style={styles.topBar}>
@@ -1345,31 +1627,18 @@ export default function App() {
         </Pressable>
         <Text style={[styles.heading, styles.topBarTitle]}>{translations.serviceRequest}</Text>
       </View>
+      {renderServiceRequestFilterModal()}
       <View style={styles.fieldBlock}>
         <Pressable
           accessibilityRole="button"
           accessibilityState={{ expanded: serviceRequestFilterOpen }}
-          onPress={() => setServiceRequestFilterOpen((open) => !open)}
-          style={styles.problemSelect}
+          onPress={openServiceRequestFilter}
+          style={[styles.filterTriggerButton, serviceRequestFilter !== 'all' && styles.filterTriggerButtonActive]}
         >
-          <Text style={styles.problemSelectText}>
-            {getServiceRequestFilterLabel(serviceRequestFilter)}
+          <Text style={[styles.filterTriggerText, serviceRequestFilter !== 'all' && styles.filterTriggerTextActive]}>
+            {translations.filter}{serviceRequestFilter !== 'all' ? ' · 1' : ''}
           </Text>
-          <Text style={styles.problemSelectText}>{serviceRequestFilterOpen ? '▴' : '▾'}</Text>
         </Pressable>
-        {serviceRequestFilterOpen ? SERVICE_REQUEST_FILTERS.map((filter) => (
-          <Pressable
-            key={filter}
-            accessibilityRole="button"
-            onPress={() => {
-              setServiceRequestFilter(filter);
-              setServiceRequestFilterOpen(false);
-            }}
-            style={styles.problemOption}
-          >
-            <Text style={styles.problemOptionText}>{getServiceRequestFilterLabel(filter)}</Text>
-          </Pressable>
-        )) : null}
       </View>
       <ScrollView style={styles.customerList} contentContainerStyle={styles.customerListContent}>
         {serviceRequestsLoading ? (
@@ -1382,7 +1651,7 @@ export default function App() {
             </Pressable>
           </View>
         ) : filteredServiceRequests.length === 0 ? (
-          <Text style={styles.customerAddress}>{translations.noServiceRequests}</Text>
+          renderServiceRequestsEmptyState()
         ) : filteredServiceRequests.map((request) => (
           <View key={request.id} style={styles.customerCard}>
             <Text style={styles.customerName}>{request.customerName}</Text>
@@ -1646,17 +1915,17 @@ export default function App() {
             </View>
           </View>
           <Pressable onPress={() => setScreen('profile')} style={styles.webAccountMenuItem}>
-            <Text style={styles.webAccountMenuText}>Profile</Text>
+            <Text style={styles.webAccountMenuText}>{translations.profile}</Text>
           </Pressable>
           <Pressable
             onPress={() => setLanguage((current) => (current === 'en' ? 'bn' : 'en'))}
             style={styles.webAccountMenuItem}
           >
-            <Text style={styles.webAccountMenuText}>Language</Text>
+            <Text style={styles.webAccountMenuText}>{translations.language}</Text>
             <Text style={styles.webAccountLanguage}>{language === 'en' ? 'বাংলা | EN' : 'EN | বাংলা'}</Text>
           </Pressable>
           <Pressable onPress={logOut} style={styles.webAccountMenuItem}>
-            <Text style={styles.webAccountLogout}>Log Out</Text>
+            <Text style={styles.webAccountLogout}>{translations.logOut}</Text>
           </Pressable>
         </View>
       ) : null}
@@ -1677,10 +1946,6 @@ export default function App() {
             <Text style={styles.webPageTitle}>{translations.meterReading}</Text>
           </View>
           <View style={styles.webTopActions}>
-            <View style={styles.webSyncPill}>
-              <View style={styles.webOnlineDot} />
-              <Text style={styles.webSyncText}>{translations.lastSync}</Text>
-            </View>
             <Pressable
               onPress={() => setLanguage((current) => (current === 'en' ? 'bn' : 'en'))}
               style={styles.webLanguageButton}
@@ -1696,7 +1961,7 @@ export default function App() {
         >
           <View style={styles.webWelcomeRow}>
             <View>
-              <Text style={styles.webWelcomeTitle}>Good afternoon, Field Officer</Text>
+              <Text style={styles.webWelcomeTitle}>{translations.welcomeGreeting}</Text>
             </View>
             <View style={{ flexDirection: 'row', gap: 10, alignItems: 'center' }}>
               <Pressable
@@ -1760,7 +2025,7 @@ export default function App() {
                 </Text>
               </View>
               <Text style={styles.webRecordCount}>
-                {readingDashboardTab === 'pending' ? filteredCustomers.length : filteredCompletedReadings.length} records
+                {readingDashboardTab === 'pending' ? filteredCustomers.length : filteredCompletedReadings.length} {translations.recordCountSuffix}
               </Text>
             </View>
 
@@ -1775,7 +2040,23 @@ export default function App() {
                   style={styles.webSearchInput}
                 />
               </View>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityState={{ expanded: readingFilterOpen }}
+                onPress={() => {
+                  if (!readingFilterOpen) setDraftWardFilter(wardFilter);
+                  if (!readingFilterOpen) setDraftBillApprovalFilter(billApprovalFilter);
+                  setWardOptionOpen(false);
+                  setReadingFilterOpen((open) => !open);
+                }}
+                style={[styles.webFilterTriggerButton, wardFilter !== 'all' && styles.webFilterTriggerButtonActive]}
+              >
+                <Text style={[styles.filterTriggerText, wardFilter !== 'all' && styles.filterTriggerTextActive]}>
+                  {translations.filter}{activeReadingFilterCount > 0 ? ` · ${activeReadingFilterCount}` : ''}
+                </Text>
+              </Pressable>
             </View>
+            {renderReadingFilterPanel()}
 
             {readingDashboardTab === 'pending' && assignedCustomersLoading ? (
               <Text style={styles.webPanelSubtitle}>{translations.loadingSubmittedReadings}</Text>
@@ -1804,10 +2085,10 @@ export default function App() {
 
             {readingDashboardTab === 'pending' && !isCompactWeb ? (
               <View style={styles.webTableHeader}>
-                <Text style={[styles.webTableHeaderText, styles.webCustomerColumn]}>CUSTOMER</Text>
-                <Text style={[styles.webTableHeaderText, styles.webAccountColumn]}>ACCOUNT / METER</Text>
-                <Text style={[styles.webTableHeaderText, styles.webStatusColumn]}>STATUS</Text>
-                <Text style={[styles.webTableHeaderText, styles.webAmountColumn]}>BILL AMOUNT</Text>
+                <Text style={[styles.webTableHeaderText, styles.webCustomerColumn]}>{translations.dashboardCustomer}</Text>
+                <Text style={[styles.webTableHeaderText, styles.webAccountColumn]}>{translations.dashboardAccountMeter}</Text>
+                <Text style={[styles.webTableHeaderText, styles.webStatusColumn]}>{translations.dashboardStatus}</Text>
+                <Text style={[styles.webTableHeaderText, styles.webAmountColumn]}>{translations.dashboardBillAmount}</Text>
               </View>
             ) : null}
 
@@ -1827,6 +2108,7 @@ export default function App() {
                       <Text style={[styles.webAmountText, { color: customer.color }]}>{customer.amt}</Text>
                     </View>
                     <Text style={styles.webCustomerAddress}>{customer.addr}</Text>
+                    {customer.wardNo ? <Text style={styles.webCustomerAddress}>{translations.ward} {customer.wardNo}</Text> : null}
                     <View style={styles.webMobileCustomerBottom}>
                       <Text style={styles.webTableSecondaryText}>{customer.acc} · {translations.meter} {customer.meter}</Text>
                       <View style={styles.webMobileBadgesRow}>
@@ -1845,6 +2127,7 @@ export default function App() {
                     <View style={styles.webCustomerColumn}>
                       <Text style={styles.webCustomerName}>{customer.name}</Text>
                       <Text style={styles.webCustomerAddress}>{customer.addr}</Text>
+                      {customer.wardNo ? <Text style={styles.webCustomerAddress}>{translations.ward} {customer.wardNo}</Text> : null}
                       {customer.flag ? <Text style={styles.webComplaint}>{translations.complaint}</Text> : null}
                     </View>
                     <View style={styles.webAccountColumn}>
@@ -1871,9 +2154,7 @@ export default function App() {
               <View style={styles.emptyFilteredBox}>
                 <Text style={styles.emptyFilteredIcon}>📋</Text>
                 <Text style={styles.emptyFilteredTitle}>
-                  {assignedCustomers.length === 0
-                    ? translations.noPendingReadings
-                    : translations.noSearchResults}
+                  {getReadingEmptyMessage(assignedCustomers.length, translations.noPendingReadings)}
                 </Text>
               </View>
             ) : null}
@@ -1889,7 +2170,7 @@ export default function App() {
               <View style={styles.emptyFilteredBox}>
                 <Text style={styles.emptyFilteredIcon}>✓</Text>
                 <Text style={styles.emptyFilteredTitle}>
-                  {completedReadings.length === 0 ? translations.noCompletedReadings : translations.noSearchResults}
+                  {getReadingEmptyMessage(completedReadings.length, translations.noCompletedReadings)}
                 </Text>
               </View>
             ) : null}
@@ -1908,7 +2189,7 @@ export default function App() {
       <View key={record.id} style={styles.completedReadingTableRow}>
         <View style={styles.completedReadingIdentity}>
           <Text style={styles.webCustomerName}>{record.customer}</Text>
-          <Text style={styles.webTableSecondaryText}>{record.account} · {translations.meter} {record.meter}</Text>
+          <Text style={styles.webTableSecondaryText}>{record.account} · {translations.meter} {record.meter}{record.wardNo ? ` · ${translations.ward} ${record.wardNo}` : ''}</Text>
         </View>
         <View style={styles.completedReadingValueColumn}>
           <Text style={styles.completedReadingValue}>{record.current}</Text>
@@ -1925,7 +2206,7 @@ export default function App() {
         <View style={styles.completedReadingCardHeader}>
           <View style={styles.completedReadingIdentity}>
             <Text style={styles.webCustomerName}>{record.customer}</Text>
-            <Text style={styles.webTableSecondaryText}>{record.account} · {translations.meter} {record.meter}</Text>
+            <Text style={styles.webTableSecondaryText}>{record.account} · {translations.meter} {record.meter}{record.wardNo ? ` · ${translations.ward} ${record.wardNo}` : ''}</Text>
           </View>
           <Text style={styles.completedReadingUsage}>{record.current}</Text>
         </View>
@@ -1945,7 +2226,6 @@ export default function App() {
         <View style={styles.webMain}>
           <View style={[styles.webTopBar, isCompactWeb && styles.webTopBarCompact]}>
             <View>
-              <Text style={styles.webBreadcrumb}>WORKSPACE  /  METER READING</Text>
               <Text style={styles.webPageTitle}>{translations.completedReadings}</Text>
             </View>
             <Pressable onPress={() => setScreen('list')} style={styles.webBackButton}>
@@ -1960,6 +2240,34 @@ export default function App() {
               </View>
             </View>
             <View style={styles.webPanel}>
+              <View style={styles.webToolbar}>
+                <View style={styles.webSearchField}>
+                  <Text style={styles.searchIcon}>⌕</Text>
+                  <TextInput
+                    value={searchText}
+                    onChangeText={setSearchText}
+                    placeholder={`${translations.search}: ${translations.searchPlaceholder}`}
+                    placeholderTextColor="#5B6275"
+                    style={styles.webSearchInput}
+                  />
+                </View>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityState={{ expanded: readingFilterOpen }}
+                  onPress={() => {
+                    if (!readingFilterOpen) setDraftWardFilter(wardFilter);
+                    if (!readingFilterOpen) setDraftBillApprovalFilter(billApprovalFilter);
+                    setWardOptionOpen(false);
+                    setReadingFilterOpen((open) => !open);
+                  }}
+                  style={[styles.webFilterTriggerButton, wardFilter !== 'all' && styles.webFilterTriggerButtonActive]}
+                >
+                  <Text style={[styles.filterTriggerText, wardFilter !== 'all' && styles.filterTriggerTextActive]}>
+                    {translations.filter}{activeReadingFilterCount > 0 ? ` · ${activeReadingFilterCount}` : ''}
+                  </Text>
+                </Pressable>
+              </View>
+              {renderReadingFilterPanel()}
               {!isCompactWeb ? (
                 <View style={styles.completedReadingTableHeader}>
                   <Text style={styles.completedReadingIdentity}>{translations.customerDetails} / {translations.accountNumber}</Text>
@@ -1977,10 +2285,10 @@ export default function App() {
                   </Pressable>
                 </View>
               ) : null}
-              {!completedReadingsLoading && !completedReadingsError && completedReadings.length === 0
-                ? <Text style={styles.webPanelSubtitle}>{translations.noCompletedReadings}</Text>
+              {!completedReadingsLoading && !completedReadingsError && filteredCompletedReadings.length === 0
+                ? <Text style={styles.webPanelSubtitle}>{getReadingEmptyMessage(completedReadings.length, translations.noCompletedReadings)}</Text>
                 : null}
-              {completedReadings.map(renderCompletedRecord)}
+              {filteredCompletedReadings.map(renderCompletedRecord)}
             </View>
             {renderWebPageFooter()}
           </ScrollView>
@@ -2000,6 +2308,34 @@ export default function App() {
             <Text style={styles.webStatHint}>{translations.completedThisCycle}</Text>
           </View>
         </View>
+        <View style={styles.searchArea}>
+          <View style={styles.searchFieldContainer}>
+            <Text style={styles.searchIcon}>⌕</Text>
+            <TextInput
+              value={searchText}
+              onChangeText={setSearchText}
+              placeholder={`${translations.search}: ${translations.searchPlaceholder}`}
+              placeholderTextColor="#5B6275"
+              style={styles.searchInput}
+            />
+          </View>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityState={{ expanded: readingFilterOpen }}
+            onPress={() => {
+              if (!readingFilterOpen) setDraftWardFilter(wardFilter);
+              if (!readingFilterOpen) setDraftBillApprovalFilter(billApprovalFilter);
+              setWardOptionOpen(false);
+              setReadingFilterOpen((open) => !open);
+            }}
+            style={[styles.filterTriggerButton, wardFilter !== 'all' && styles.filterTriggerButtonActive]}
+          >
+            <Text style={[styles.filterTriggerText, wardFilter !== 'all' && styles.filterTriggerTextActive]}>
+              {translations.filter}{activeReadingFilterCount > 0 ? ` · ${activeReadingFilterCount}` : ''}
+            </Text>
+          </Pressable>
+        </View>
+        {renderReadingFilterPanel()}
         <ScrollView style={styles.customerList} contentContainerStyle={styles.completedReadingsList}>
           {completedReadingsLoading ? <Text style={styles.webPanelSubtitle}>{translations.loadingCompletedReadings}</Text> : null}
           {completedReadingsError ? (
@@ -2010,10 +2346,10 @@ export default function App() {
               </Pressable>
             </View>
           ) : null}
-          {!completedReadingsLoading && !completedReadingsError && completedReadings.length === 0
-            ? <Text style={styles.webPanelSubtitle}>{translations.noCompletedReadings}</Text>
+          {!completedReadingsLoading && !completedReadingsError && filteredCompletedReadings.length === 0
+            ? <Text style={styles.webPanelSubtitle}>{getReadingEmptyMessage(completedReadings.length, translations.noCompletedReadings)}</Text>
             : null}
-          {completedReadings.map(renderCompletedRecord)}
+          {filteredCompletedReadings.map(renderCompletedRecord)}
         </ScrollView>
         <View style={styles.bottomNav}>
           <Pressable onPress={() => setScreen('list')} style={styles.bottomNavItem}>
@@ -2035,49 +2371,43 @@ export default function App() {
       <View style={styles.webMain}>
         <View style={[styles.webTopBar, isCompactWeb && styles.webTopBarCompact]}>
           <View>
-            <Text style={styles.webBreadcrumb}>WORKSPACE  /  SERVICE REQUESTS</Text>
             <Text style={styles.webPageTitle}>{translations.serviceRequest}</Text>
           </View>
           <Pressable onPress={openCreateServiceRequest} style={styles.webPrimaryButton}>
             <Text style={styles.webPrimaryButtonText}>＋  {translations.createServiceRequest}</Text>
           </Pressable>
         </View>
+        {renderServiceRequestFilterModal()}
         <ScrollView
           style={styles.webContent}
           contentContainerStyle={[styles.webContentInner, styles.webPageFooterSpace, isCompactWeb && styles.webContentInnerCompact]}
         >
           <View style={styles.webPanel}>
-            <View style={[styles.webPanelHeading, isCompactWeb && styles.webPanelHeadingCompact]}>
+            <View style={[
+              styles.webPanelHeading,
+              styles.webServiceRequestHeadingLayer,
+              isCompactWeb && styles.webPanelHeadingCompact,
+              isCompactWeb && styles.webServiceRequestHeadingCompact,
+            ]}>
               <View style={isCompactWeb && styles.webPanelHeadingText}>
                 <Text style={styles.webPanelTitle}>{translations.serviceRequest}</Text>
                 <Text style={styles.webPanelSubtitle}>{translations.serviceRequestListDescription}</Text>
               </View>
-              <View>
+              <View style={[styles.webServiceRequestControls, isCompactWeb && styles.webServiceRequestControlsCompact]}>
                 <Pressable
                   accessibilityRole="button"
                   accessibilityState={{ expanded: serviceRequestFilterOpen }}
-                  onPress={() => setServiceRequestFilterOpen((open) => !open)}
-                  style={styles.problemSelect}
+                  onPress={openServiceRequestFilter}
+                  style={[styles.webFilterTriggerButton, serviceRequestFilter !== 'all' && styles.webFilterTriggerButtonActive]}
                 >
-                  <Text style={styles.problemSelectText}>
-                    {getServiceRequestFilterLabel(serviceRequestFilter)}
+                  <Text style={[styles.webFilterTriggerText, serviceRequestFilter !== 'all' && styles.filterTriggerTextActive]}>
+                    {translations.filter}{serviceRequestFilter !== 'all' ? ' · 1' : ''}
                   </Text>
-                  <Text style={styles.problemSelectText}>{serviceRequestFilterOpen ? '▴' : '▾'}</Text>
                 </Pressable>
-                {serviceRequestFilterOpen ? SERVICE_REQUEST_FILTERS.map((filter) => (
-                  <Pressable
-                    key={filter}
-                    onPress={() => {
-                      setServiceRequestFilter(filter);
-                      setServiceRequestFilterOpen(false);
-                    }}
-                    style={styles.problemOption}
-                  >
-                    <Text style={styles.problemOptionText}>{getServiceRequestFilterLabel(filter)}</Text>
-                  </Pressable>
-                )) : null}
+                <Text style={[styles.webRecordCount, isCompactWeb && styles.webServiceRequestRecordCountCompact]}>
+                  {filteredServiceRequests.length} {translations.serviceRequest}
+                </Text>
               </View>
-              <Text style={styles.webRecordCount}>{filteredServiceRequests.length} {translations.serviceRequest}</Text>
             </View>
             {serviceRequestsLoading ? (
               <Text style={styles.webPanelSubtitle}>{translations.serviceRequestLoading}</Text>
@@ -2089,7 +2419,7 @@ export default function App() {
                 </Pressable>
               </View>
             ) : filteredServiceRequests.length === 0 ? (
-              <Text style={styles.webPanelSubtitle}>{translations.noServiceRequests}</Text>
+              renderServiceRequestsEmptyState()
             ) : filteredServiceRequests.map((request) => (
               <View key={request.id} style={[styles.webRequestRow, isCompactWeb && styles.webRequestRowCompact]}>
                 <View style={styles.webRequestIcon}><Text style={styles.webRequestIconText}>⚠</Text></View>
@@ -2117,7 +2447,6 @@ export default function App() {
       <View style={styles.webMain}>
         <View style={[styles.webTopBar, isCompactWeb && styles.webTopBarCompact]}>
           <View>
-            <Text style={styles.webBreadcrumb}>WORKSPACE  /  SERVICE REQUESTS</Text>
             <Text style={styles.webPageTitle}>{translations.createServiceRequest}</Text>
           </View>
           <Pressable onPress={() => setScreen('sr')} style={styles.webBackButton}>
@@ -2244,7 +2573,6 @@ export default function App() {
       <View style={styles.webMain}>
         <View style={[styles.webTopBar, isCompactWeb && styles.webTopBarCompact]}>
           <View>
-            <Text style={styles.webBreadcrumb}>WORKSPACE  /  SERVICE REQUESTS</Text>
             <Text style={styles.webPageTitle}>{translations.serviceRequestSubmitted}</Text>
           </View>
         </View>
@@ -2685,7 +3013,6 @@ export default function App() {
         <View style={styles.webMain}>
           <View style={[styles.webTopBar, isCompactWeb && styles.webTopBarCompact]}>
             <View>
-              <Text style={styles.webBreadcrumb}>WORKSPACE  /  METER READING</Text>
               <Text style={styles.webPageTitle}>{translations.currentReading}</Text>
             </View>
             <Pressable onPress={() => setScreen('detail')} style={styles.webBackButton}>
@@ -2772,8 +3099,7 @@ export default function App() {
         {renderWebSidebar()}
         <View style={styles.webMain}>
           <View style={[styles.webTopBar, isCompactWeb && styles.webTopBarCompact]}>
-            <View>
-              <Text style={styles.webBreadcrumb}>WORKSPACE  /  METER READING</Text>
+            <View>  
               <Text style={styles.webPageTitle}>{translations.reviewReading}</Text>
             </View>
             <Pressable onPress={() => setScreen('enter')} style={styles.webBackButton}>
@@ -2851,7 +3177,7 @@ export default function App() {
         <View style={styles.webMain}>
           <View style={[styles.webTopBar, isCompactWeb && styles.webTopBarCompact]}>
             <View>
-              <Text style={styles.webBreadcrumb}>WORKSPACE  /  METER READING</Text>
+
               <Text style={styles.webPageTitle}>{translations.readingSaved}</Text>
             </View>
           </View>
@@ -3043,18 +3369,22 @@ export default function App() {
           {hasPhoto && newReadingPhoto ? (
             <View style={styles.newReadingPhotoPreviewWrapper}>
               <Image source={{ uri: newReadingPhoto.uri }} style={styles.newReadingPhotoPreview} resizeMode="cover" />
-              <View style={styles.newReadingPhotoActions}>
+              <View style={[styles.newReadingPhotoActions, isCompactWeb && styles.newReadingPhotoActionsCompact]}>
                 <Pressable
                   onPress={openNewReadingCamera}
-                  style={[styles.secondaryFooterButton, styles.newReadingPhotoActionButton]}
+                  accessibilityRole="button"
+                  accessibilityLabel={translations.retakePhoto}
+                  style={({ pressed }) => [styles.secondaryFooterButton, styles.newReadingPhotoActionButton, isCompactWeb && styles.newReadingPhotoActionButtonCompact, pressed && styles.newReadingPhotoButtonPressed]}
                 >
-                  <Text style={styles.secondaryFooterText}>↻ {translations.retakePhoto}</Text>
+                  <Text style={[styles.secondaryFooterText, styles.newReadingPhotoButtonText]}>↻ {translations.retakePhoto}</Text>
                 </Pressable>
                 <Pressable
                   onPress={() => void chooseNewReadingPhotoFromGallery()}
-                  style={[styles.secondaryFooterButton, styles.newReadingPhotoActionButton]}
+                  accessibilityRole="button"
+                  accessibilityLabel={translations.chooseFromGallery}
+                  style={({ pressed }) => [styles.secondaryFooterButton, styles.newReadingPhotoActionButton, isCompactWeb && styles.newReadingPhotoActionButtonCompact, pressed && styles.newReadingPhotoButtonPressed]}
                 >
-                  <Text style={styles.secondaryFooterText}>{translations.chooseFromGallery}</Text>
+                  <Text style={[styles.secondaryFooterText, styles.newReadingPhotoButtonText]}>{translations.chooseFromGallery}</Text>
                 </Pressable>
               </View>
               <Text style={styles.readingHelper}>
@@ -3063,21 +3393,25 @@ export default function App() {
             </View>
           ) : (
             <>
-              <View style={styles.newReadingPhotoActions}>
+              <View style={[styles.newReadingPhotoActions, isCompactWeb && styles.newReadingPhotoActionsCompact]}>
                 <Pressable
                   onPress={openNewReadingCamera}
-                  style={[styles.primaryButton, styles.newReadingPhotoActionButton]}
+                  accessibilityRole="button"
+                  accessibilityLabel={translations.takePhoto}
+                  style={({ pressed }) => [styles.primaryButton, styles.newReadingPhotoActionButton, isCompactWeb && styles.newReadingPhotoActionButtonCompact, pressed && styles.newReadingPhotoButtonPressed]}
                 >
-                  <Text style={styles.primaryButtonText}>📷 {translations.takePhoto}</Text>
+                  <Text style={[styles.primaryButtonText, styles.newReadingPhotoButtonText]}>📷 {translations.takePhoto}</Text>
                 </Pressable>
                 <Pressable
                   onPress={() => void chooseNewReadingPhotoFromGallery()}
-                  style={[styles.secondaryFooterButton, styles.newReadingPhotoActionButton]}
+                  accessibilityRole="button"
+                  accessibilityLabel={translations.chooseFromGallery}
+                  style={({ pressed }) => [styles.secondaryFooterButton, styles.newReadingPhotoActionButton, isCompactWeb && styles.newReadingPhotoActionButtonCompact, pressed && styles.newReadingPhotoButtonPressed]}
                 >
-                  <Text style={styles.secondaryFooterText}>{translations.chooseFromGallery}</Text>
+                  <Text style={[styles.secondaryFooterText, styles.newReadingPhotoButtonText]}>{translations.chooseFromGallery}</Text>
                 </Pressable>
               </View>
-              <Text style={styles.readingHelper}>{translations.meterPhotoRequired}</Text>
+              <Text style={[styles.readingHelper, styles.newReadingPhotoRequiredHint]}>{translations.meterPhotoRequired}</Text>
             </>
           )}
         </View>
@@ -3112,7 +3446,6 @@ export default function App() {
         <View style={styles.webMain}>
           <View style={[styles.webTopBar, isCompactWeb && styles.webTopBarCompact]}>
             <View>
-              <Text style={styles.webBreadcrumb}>WORKSPACE  /  METER READING</Text>
               <Text style={styles.webPageTitle}>{translations.newReading}</Text>
             </View>
             <Pressable onPress={() => setScreen('list')} style={styles.webBackButton}>

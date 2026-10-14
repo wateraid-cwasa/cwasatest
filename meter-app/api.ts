@@ -78,6 +78,7 @@ export type MeterReadingSubmission = {
   id: string;
   readerCode: string;
   accountNo: string;
+  wardNo: string | null;
   meterNo: string | null;
   customerName: string;
   currentBill: string;
@@ -626,6 +627,8 @@ function isCreatedReading(value: unknown): value is CreatedReading {
     typeof value.id === 'string' &&
     'accountNo' in value &&
     typeof value.accountNo === 'string' &&
+    'wardNo' in value &&
+    (typeof value.wardNo === 'string' || value.wardNo === null) &&
     'meterNo' in value &&
     (typeof value.meterNo === 'string' || value.meterNo === null) &&
     'customerName' in value &&

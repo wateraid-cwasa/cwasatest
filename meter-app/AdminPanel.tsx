@@ -183,6 +183,7 @@ export default function AdminPanel({ language, onSignOut }: AdminPanelProps) {
                   <Text style={styles.readerCode}>
                     {t.accountNumber}: {reading.accountNo} · {t.meter}: {reading.meterNo || '—'}
                   </Text>
+                  <Text style={styles.readerCode}>{t.ward}: {reading.wardNo || '—'}</Text>
                   <Text style={styles.readerCode}>
                     {t.currentBill}: ৳{Number(reading.currentBill).toLocaleString('en-US', { minimumFractionDigits: 2 })}
                   </Text>

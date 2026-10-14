@@ -43,7 +43,8 @@ against `CWASABILL_PLATFORM_TEST` with a database administrator account. It
 creates or migrates `app.MeterReadings` and grants the runtime login the
 SELECT/INSERT/UPDATE access needed for the review flow. Reading photos are
 required, resized and JPEG-compressed to fit within 1 MB, and stored as
-`varbinary(max)` in this database.
+`varbinary(max)` in this database. Rerun this idempotent script to add the
+`WardNo` column required for inspector ward filtering.
 
 The inspector-only reading routes are `GET
 /api/v1/readings/customer-lookup?identifier=...` and `POST
