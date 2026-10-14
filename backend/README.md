@@ -16,7 +16,11 @@ npm run start:dev
 
 The health endpoint is `http://localhost:3000/api/v1/health`.
 
-Set `CORS_ORIGINS` in `.env` to a comma-separated list of trusted web-app origins.
+Set `CORS_ORIGINS` in `.env` (or the backend host's environment settings) to a
+comma-separated list of trusted web-app origins. Include
+`https://cwasa-meter-app.onrender.com` for the deployed frontend; for local web
+development, include the origin and port shown in the browser, such as
+`http://localhost:8082`. Restart or redeploy the API after changing this value.
 Native Android and iOS requests are not subject to browser CORS restrictions.
 
 ## Prisma schemas and auth tables
