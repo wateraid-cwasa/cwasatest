@@ -3490,7 +3490,7 @@ export default function App() {
     <SafeAreaProvider>
       <SafeAreaView style={[styles.appRoot, isWeb && styles.appRootWeb]}>
         <StatusBar style={screen === 'list' || screen === 'completed' || screen === 'detail' || screen === 'camera' || screen === 'enter' || screen === 'review' || screen === 'saved' || screen === 'newReading' ? 'light' : 'dark'} />
-        <View style={[styles.deviceShell, isWeb && styles.deviceShellWeb, isCompactWeb && styles.deviceShellWebCompact]}>
+        <View style={[styles.deviceShell, isWeb && styles.deviceShellWeb, isWeb && (isCompactWeb || isShortScreen) && styles.deviceShellWebCompact]}>
           {screen === 'splash' ? renderSplash() : null}
           {screen === 'signin' ? renderSignIn() : null}
           {screen === 'admin' && authUser?.role === 'admin' ? (

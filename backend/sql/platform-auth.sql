@@ -44,3 +44,26 @@
     );
   END;
   GO
+
+  IF OBJECT_ID(N'app.MeterInspectorDirectory', N'U') IS NULL
+  BEGIN
+    CREATE TABLE app.MeterInspectorDirectory (
+      RICODE NVARCHAR(255) NOT NULL,
+      InspectorName NVARCHAR(255) NOT NULL,
+      PhoneNumber NVARCHAR(50) NOT NULL,
+      Email NVARCHAR(255) NOT NULL,
+      CreatedAt DATETIME2 NOT NULL
+        CONSTRAINT DF_App_MeterInspectorDirectory_CreatedAt DEFAULT SYSUTCDATETIME(),
+      CreatedByAdminId UNIQUEIDENTIFIER NOT NULL,
+      CONSTRAINT PK_App_MeterInspectorDirectory PRIMARY KEY (RICODE),
+      CONSTRAINT FK_App_MeterInspectorDirectory_CreatedBy
+        FOREIGN KEY (CreatedByAdminId) REFERENCES app.AdminAccounts (AdminId)
+    );
+  END;
+  GO
+
+  IF DATABASE_PRINCIPAL_ID(N'cwasa_platform_rw') IS NOT NULL
+  BEGIN
+    GRANT SELECT, INSERT, UPDATE ON OBJECT::[app].[MeterInspectorDirectory] TO [cwasa_platform_rw];
+  END;
+  GO

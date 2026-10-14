@@ -33,7 +33,7 @@
       CONSTRAINT [CK_App_MeterReadings_Latitude] CHECK ([Latitude] BETWEEN -90 AND 90),
       CONSTRAINT [CK_App_MeterReadings_Longitude] CHECK ([Longitude] BETWEEN -180 AND 180),
       CONSTRAINT [CK_App_MeterReadings_Status]
-        CHECK ([Status] IN (N'Pending', N'Completed'))
+        CHECK ([Status] IN (N'Pending', N'Completed', N'Rejected'))
     );
 
     CREATE INDEX [IX_App_MeterReadings_ReaderCode_CreatedAt]
@@ -55,16 +55,19 @@
   END;
   GO
 
-  IF NOT EXISTS (
+  IF EXISTS (
     SELECT 1 FROM sys.check_constraints
     WHERE [name] = N'CK_App_MeterReadings_Status'
       AND [parent_object_id] = OBJECT_ID(N'app.MeterReadings')
   )
   BEGIN
-    ALTER TABLE [app].[MeterReadings]
-      ADD CONSTRAINT [CK_App_MeterReadings_Status]
-        CHECK ([Status] IN (N'Pending', N'Completed'));
+    ALTER TABLE [app].[MeterReadings] DROP CONSTRAINT [CK_App_MeterReadings_Status];
   END;
+  GO
+
+  ALTER TABLE [app].[MeterReadings]
+    ADD CONSTRAINT [CK_App_MeterReadings_Status]
+      CHECK ([Status] IN (N'Pending', N'Completed', N'Rejected'));
   GO
 
   IF NOT EXISTS (

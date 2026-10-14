@@ -47,6 +47,18 @@ export class ReadingsController {
     return this.readingsService.listPendingReadingsForAdmin(request.user);
   }
 
+  @Get('admin/completed')
+  @UseGuards(AdminGuard)
+  listCompletedForAdmin(@Req() request: AuthenticatedRequest) {
+    return this.readingsService.listCompletedReadingsForAdmin(request.user);
+  }
+
+  @Get('admin/rejected')
+  @UseGuards(AdminGuard)
+  listRejectedForAdmin(@Req() request: AuthenticatedRequest) {
+    return this.readingsService.listRejectedReadingsForAdmin(request.user);
+  }
+
   @Post('admin/:readingId/approve')
   @UseGuards(AdminGuard)
   approveReading(
@@ -54,5 +66,14 @@ export class ReadingsController {
     @Req() request: AuthenticatedRequest,
   ) {
     return this.readingsService.approveReading(readingId, request.user);
+  }
+
+  @Post('admin/:readingId/reject')
+  @UseGuards(AdminGuard)
+  rejectReading(
+    @Param('readingId') readingId: string,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.readingsService.rejectReading(readingId, request.user);
   }
 }

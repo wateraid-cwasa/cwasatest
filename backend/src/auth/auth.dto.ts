@@ -1,4 +1,4 @@
-import { IsNotEmpty, IsString, MaxLength, MinLength } from 'class-validator';
+import { IsEmail, IsNotEmpty, IsString, MaxLength, MinLength } from 'class-validator';
 
 export class InspectorLoginDto {
   @IsString()
@@ -25,6 +25,32 @@ export class AdminLoginDto {
 }
 
 export class SetInspectorPasswordDto {
+  @IsString()
+  @MinLength(12)
+  @MaxLength(128)
+  password!: string;
+}
+
+export class CreateInspectorDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(255)
+  readerCode!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(255)
+  name!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(50)
+  phoneNumber!: string;
+
+  @IsEmail()
+  @MaxLength(255)
+  email!: string;
+
   @IsString()
   @MinLength(12)
   @MaxLength(128)

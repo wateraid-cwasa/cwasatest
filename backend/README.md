@@ -33,8 +33,12 @@ in SSMS against `CWASABILL_TEST` and
 view exposes only RICODE and inspector name, so the runtime SQL login does not
 need direct access to `dbo.MICode`. The platform SQL login has DML permissions
 but is not assumed to have permission to create tables. The platform script
-creates dedicated application credential tables; it does not use billing
-passwords or SQL Server connection logins for application authentication.
+creates dedicated application credential and inspector-directory tables; it
+does not use billing passwords or SQL Server connection logins for application
+authentication. Inspectors created by admins are stored in
+`app.MeterInspectorDirectory` rather than the external billing database.
+Rerun `sql/platform-auth.sql` on existing installations to create this
+directory table and grant the runtime principal access to it.
 
 For real customer lookup, rerun `sql/source-inspector-view.sql` after
 `platform.vw_Customer` and `platform.vw_BillHistory` exist; it grants the source
@@ -54,11 +58,16 @@ inspector RICODE, and required compressed photo in the platform database.
 Submitted readings start as `Pending`; inspectors can list their own pending
 and approved entries at `GET /api/v1/readings/pending` and
 `GET /api/v1/readings/completed`. Administrators review
-`GET /api/v1/readings/admin/pending` and approve a pending entry with
-`POST /api/v1/readings/admin/:readingId/approve`. Approval changes its status
-to `Completed` and records the administrator and review time. Any authenticated
+`GET /api/v1/readings/admin/pending`, `GET
+/api/v1/readings/admin/completed`, and `GET /api/v1/readings/admin/rejected`.
+Admins approve or reject a pending entry with `POST
+/api/v1/readings/admin/:readingId/approve` or `POST
+/api/v1/readings/admin/:readingId/reject`. Each decision records the
+administrator and review time. Any authenticated
 meter inspector can look up and submit readings for any customer; each new
-reading is still recorded under the submitting inspector's RICODE.
+reading is still recorded under the submitting inspector's RICODE. Apply
+`Rejected` status support by rerunning `sql/meter-readings.sql` against the
+platform database.
 
 Service requests are stored in `app.ServiceRequests`; execute
 [`sql/service-requests.sql`](./sql/service-requests.sql) against
@@ -82,11 +91,16 @@ The CLI prompts for a username and a masked password, stores only an Argon2id
 hash, and refuses to run if an administrator already exists. There is no public
 admin signup endpoint.
 
-The source and platform Prisma clients are separate. Inspector login uses the
-unique `RICODE` from `platform.vw_Inspector`; admins authenticate against
-`app.AdminAccounts`. Admins can list inspectors and set or reset their passwords
-through protected API routes. Password hashes are stored only in the platform
-database.
+The source and platform Prisma clients are separate. Inspector login resolves
+the unique `RICODE` from `platform.vw_Inspector` or the app-managed
+`app.MeterInspectorDirectory`; admins authenticate against `app.AdminAccounts`.
+Admins can list inspectors, create app-managed inspector accounts, set/reset
+passwords, and deactivate accounts through protected API routes. Password
+hashes are stored only in the platform database.
+Admin APIs also support creating app-managed inspectors, listing approved and
+rejected readings, rejecting pending readings, and deactivating inspector
+credentials. Deactivation preserves the inspector directory row and disables
+sign-in rather than deleting account history.
 
 The Prisma pull scripts are available if you later introspect additional database
 objects. Review their output before regenerating because introspection can rename

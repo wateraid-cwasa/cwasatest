@@ -8,10 +8,12 @@ import {
   Put,
   Req,
   UseGuards,
+  Delete,
 } from '@nestjs/common';
 import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import {
   AdminLoginDto,
+  CreateInspectorDto,
   InspectorLoginDto,
   RefreshTokenDto,
   SetInspectorPasswordDto,
@@ -55,10 +57,25 @@ export class AuthController {
     return this.authService.refresh(body.refreshToken);
   }
 
+  @Delete('admin/inspectors/:readerCode')
+  @UseGuards(JwtAccessGuard, AdminGuard)
+  deactivateInspector(@Param('readerCode') readerCode: string) {
+    return this.authService.deactivateInspector(readerCode);
+  }
+
   @Get('admin/inspectors')
   @UseGuards(JwtAccessGuard, AdminGuard)
   listInspectors() {
     return this.authService.listInspectors();
+  }
+
+  @Post('admin/inspectors')
+  @UseGuards(JwtAccessGuard, AdminGuard)
+  createInspector(
+    @Body() body: CreateInspectorDto,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.authService.createInspector(body, request.user.sub);
   }
 
   @Put('admin/inspectors/:readerCode/password')

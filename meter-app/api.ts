@@ -43,6 +43,8 @@ type CurrentUserResponse = Pick<AuthenticatedUser, 'id' | 'name' | 'role'>;
 export type AdminInspector = {
   readerCode: string;
   name: string;
+  phoneNumber: string | null;
+  email: string | null;
   passwordConfigured: boolean;
   isActive: boolean;
 };
@@ -86,7 +88,7 @@ export type MeterReadingSubmission = {
   longitude: number;
   hasPhoto: boolean;
   photoBase64?: string | null;
-  status: 'Pending' | 'Completed';
+  status: 'Pending' | 'Completed' | 'Rejected';
   createdAt: string;
 };
 export type ServiceRequestStatus = 'Pending' | 'In progress' | 'Completed';
@@ -517,6 +519,14 @@ export async function loginAdmin(credentials: {
   return user;
 }
 
+export async function deactivateMeterInspector(readerCode: string): Promise<void> {
+  const options = await getAuthorizedRequestOptions();
+  await apiRequest(`/admin/inspectors/${encodeURIComponent(readerCode)}`, {
+    ...options,
+    method: 'DELETE',
+  });
+}
+
 async function getAuthorizedRequestOptions(): Promise<AxiosRequestConfig> {
   const accessToken = await getStoredAccessToken();
   if (!accessToken) {
@@ -536,6 +546,10 @@ function isAdminInspectorList(value: unknown): value is AdminInspector[] {
         typeof inspector.readerCode === 'string' &&
         'name' in inspector &&
         typeof inspector.name === 'string' &&
+        'phoneNumber' in inspector &&
+        (typeof inspector.phoneNumber === 'string' || inspector.phoneNumber === null) &&
+        'email' in inspector &&
+        (typeof inspector.email === 'string' || inspector.email === null) &&
         'passwordConfigured' in inspector &&
         typeof inspector.passwordConfigured === 'boolean' &&
         'isActive' in inspector &&
@@ -551,6 +565,26 @@ export async function getAdminInspectors(): Promise<AdminInspector[]> {
     throw new Error('The API returned an invalid inspector list.');
   }
   return response;
+}
+
+export async function createMeterInspector(input: {
+  readerCode: string;
+  name: string;
+  phoneNumber: string;
+  email: string;
+  password: string;
+}): Promise<AdminInspector> {
+  const options = await getAuthorizedRequestOptions();
+  const response = await apiRequest<unknown>('/admin/inspectors', {
+    ...options,
+    method: 'POST',
+    data: input,
+  });
+  const createdInspector = [response];
+  if (!isAdminInspectorList(createdInspector)) {
+    throw new Error('The API returned an invalid created inspector.');
+  }
+  return createdInspector[0];
 }
 
 export async function setMeterInspectorPassword(
@@ -685,7 +719,7 @@ function isMeterReadingSubmission(value: unknown): value is MeterReadingSubmissi
     typeof value.hasPhoto === 'boolean' &&
     (!('photoBase64' in value) || typeof value.photoBase64 === 'string' || value.photoBase64 === null) &&
     'status' in value &&
-    (value.status === 'Pending' || value.status === 'Completed') &&
+    (value.status === 'Pending' || value.status === 'Completed' || value.status === 'Rejected') &&
     'createdAt' in value &&
     typeof value.createdAt === 'string'
   );
@@ -712,9 +746,25 @@ export function getAdminPendingMeterReadings(): Promise<MeterReadingSubmission[]
   return getMeterReadings('/readings/admin/pending');
 }
 
+export function getAdminCompletedMeterReadings(): Promise<MeterReadingSubmission[]> {
+  return getMeterReadings('/readings/admin/completed');
+}
+
+export function getAdminRejectedMeterReadings(): Promise<MeterReadingSubmission[]> {
+  return getMeterReadings('/readings/admin/rejected');
+}
+
 export async function approveMeterReading(readingId: string): Promise<void> {
   const options = await getAuthorizedRequestOptions();
   await apiRequest(`/readings/admin/${encodeURIComponent(readingId)}/approve`, {
+    ...options,
+    method: 'POST',
+  });
+}
+
+export async function rejectMeterReading(readingId: string): Promise<void> {
+  const options = await getAuthorizedRequestOptions();
+  await apiRequest(`/readings/admin/${encodeURIComponent(readingId)}/reject`, {
     ...options,
     method: 'POST',
   });

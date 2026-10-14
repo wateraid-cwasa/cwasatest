@@ -46,7 +46,7 @@ export type ReadingSubmissionRecord = {
   latitude: number;
   longitude: number;
   hasPhoto: boolean;
-  status: 'Pending' | 'Completed';
+  status: 'Pending' | 'Completed' | 'Rejected';
   createdAt: Date;
 };
 
@@ -188,6 +188,18 @@ export class ReadingsService {
   }
 
   async listPendingReadingsForAdmin(user: SessionClaims) {
+    return this.listReadingsForAdmin(user, 'Pending');
+  }
+
+  async listCompletedReadingsForAdmin(user: SessionClaims) {
+    return this.listReadingsForAdmin(user, 'Completed');
+  }
+
+  async listRejectedReadingsForAdmin(user: SessionClaims) {
+    return this.listReadingsForAdmin(user, 'Rejected');
+  }
+
+  private async listReadingsForAdmin(user: SessionClaims, status: ReadingSubmissionRecord['status']) {
     if (user.role !== 'admin') {
       throw new ForbiddenException('An administrator account is required.');
     }
@@ -207,7 +219,7 @@ export class ReadingsService {
         [Status] AS [status],
         [CreatedAt] AS [createdAt]
       FROM [app].[MeterReadings]
-      WHERE [Status] = N'Pending'
+      WHERE [Status] = ${status}
       ORDER BY [CreatedAt] ASC
     `;
     return records.map(({ meterPhoto, ...record }) => ({
@@ -233,6 +245,25 @@ export class ReadingsService {
       throw new NotFoundException('No pending reading was found with that ID.');
     }
     return { id: approved.id, status: 'Completed' as const };
+  }
+
+  async rejectReading(readingId: string, user: SessionClaims) {
+    if (user.role !== 'admin') {
+      throw new ForbiddenException('An administrator account is required.');
+    }
+    const [rejected] = await this.platformDatabase.$queryRaw<Array<{ id: string }>>`
+      UPDATE [app].[MeterReadings]
+      SET [Status] = N'Rejected',
+          [ReviewedAt] = SYSUTCDATETIME(),
+          [ReviewedBy] = ${user.sub}
+      OUTPUT CONVERT(nvarchar(36), INSERTED.[ReadingId]) AS [id]
+      WHERE [ReadingId] = TRY_CONVERT(uniqueidentifier, ${readingId})
+        AND [Status] = N'Pending'
+    `;
+    if (!rejected) {
+      throw new NotFoundException('No pending reading was found with that ID.');
+    }
+    return { id: rejected.id, status: 'Rejected' as const };
   }
 
   private async findCustomer(identifier: string): Promise<CustomerLookupRecord | null> {
