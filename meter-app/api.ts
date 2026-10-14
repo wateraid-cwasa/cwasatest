@@ -4,7 +4,7 @@ import { Platform } from 'react-native';
 
 export const API_BASE_URL =
   process.env.EXPO_PUBLIC_API_BASE_URL ??
-  'https://mumbling-wildfowl-flashback.ngrok-free.dev';
+  'https://mumbling-wildfowl-flashback.ngrok-free.dev/api/v1';
 
 export const apiClient = axios.create({
   baseURL: API_BASE_URL,

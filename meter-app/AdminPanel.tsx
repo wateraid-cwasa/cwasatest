@@ -96,8 +96,10 @@ export default function AdminPanel({ language, onSignOut }: AdminPanelProps) {
       setPendingReadings(pending);
       setApprovedReadings(approved);
       setRejectedReadings(rejected);
-    } catch {
-      setPendingError(t.adminReadingsLoadFailed);
+    } catch (error) {
+      setPendingError(error instanceof Error
+        ? `${t.adminReadingsLoadFailed} (${error.message})`
+        : t.adminReadingsLoadFailed);
     } finally {
       setPendingLoading(false);
     }
@@ -108,8 +110,10 @@ export default function AdminPanel({ language, onSignOut }: AdminPanelProps) {
     setLoadError('');
     try {
       setInspectors(await getAdminInspectors());
-    } catch {
-      setLoadError(t.adminInspectorsLoadFailed);
+    } catch (error) {
+      setLoadError(error instanceof Error
+        ? `${t.adminInspectorsLoadFailed} (${error.message})`
+        : t.adminInspectorsLoadFailed);
     } finally {
       setLoading(false);
     }
