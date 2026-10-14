@@ -74,6 +74,7 @@ export type ServiceRequestCustomer = Pick<
 export type CreatedReading = {
   id: string;
   accountNo: string;
+  wardNo: string | null;
   meterNo: string | null;
   customerName: string;
   currentBill: string;

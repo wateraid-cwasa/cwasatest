@@ -155,6 +155,7 @@ export class ReadingsService {
     return {
       id: created.readingId,
       accountNo: customer.accountNo,
+      wardNo: customer.wardNo,
       meterNo: customer.meterNo,
       customerName: customer.customerName,
       currentBill: input.currentBill,

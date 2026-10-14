@@ -134,7 +134,7 @@ export default function App() {
   const profileStatus = useSelector((state: RootState) => state.auth.profileStatus);
   const profileError = useSelector((state: RootState) => state.auth.profileError);
   const [screen, setScreen] = useState<ScreenName>('splash');
-  const [webSidebarCollapsed, setWebSidebarCollapsed] = useState(viewportWidth <= 768);
+  const [webMenuOpen, setWebMenuOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [language, setLanguage] = useState<Language>('en');
   const [meterReaderId, setMeterReaderId] = useState('');
@@ -224,10 +224,6 @@ export default function App() {
   const newReadingLookupSequence = useRef(0);
   const isCompactWeb = isWeb && viewportWidth <= 640;
   const isShortScreen = viewportHeight <= 700;
-
-  useEffect(() => {
-    setWebSidebarCollapsed(viewportWidth <= 768);
-  }, [viewportWidth]);
 
   const [fontsLoaded] = useFonts({
     'Open Sans': OpenSans_400Regular,
@@ -1119,6 +1115,7 @@ export default function App() {
     try {
       await clearStoredTokens();
       dispatch(clearAuthenticatedUser());
+      setWebMenuOpen(false);
       setDrawerOpen(false);
       setSignInMessage('');
       setAdminSignInMode(false);
@@ -1822,122 +1819,91 @@ export default function App() {
     </View>
   );
 
-  const renderWebSidebar = () => (
-    <View style={[styles.webSidebar, webSidebarCollapsed && styles.webSidebarCollapsed]}>
-      <View style={styles.webSidebarHeader}>
+  const renderWebSidebar = () => null;
+
+  const renderWebMenu = () => (
+    <>
+      {webMenuOpen ? (
+        <View style={styles.webMenuLayer}>
+          <Pressable
+            accessibilityLabel="Close workspace and account menu"
+            onPress={() => setWebMenuOpen(false)}
+            style={styles.webMenuBackdrop}
+          />
+          <View style={[styles.webMenuPopover, isCompactWeb && styles.webMenuPopoverCompact]}>
+            <View style={styles.webAccountIdentity}>
+              <View style={styles.webAccountAvatar}><Text style={styles.webAccountAvatarText}>{authAvatarInitial}</Text></View>
+              <View style={styles.webAccountIdentityText}>
+                <Text numberOfLines={1} style={styles.webAccountName}>{authDisplayName}</Text>
+                <Text numberOfLines={1} style={styles.webAccountMeta}>{authAccountMeta}</Text>
+              </View>
+            </View>
+            <View style={styles.webMenuDivider} />
+            <Text style={styles.webMenuSectionLabel}>{translations.workspace}</Text>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => {
+                setWebMenuOpen(false);
+                setScreen('list');
+              }}
+              style={styles.webMenuItem}
+            >
+              <Text style={styles.webMenuItemIcon}>◉</Text>
+              <Text style={styles.webMenuItemText}>{translations.meterReading}</Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => {
+                setWebMenuOpen(false);
+                setServiceMenuOpen(true);
+                setScreen('sr');
+              }}
+              style={styles.webMenuItem}
+            >
+              <Text style={styles.webMenuItemIcon}>▤</Text>
+              <Text style={styles.webMenuItemText}>{translations.serviceRequest}</Text>
+            </Pressable>
+            <View style={styles.webMenuDivider} />
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => {
+                setWebMenuOpen(false);
+                setScreen('profile');
+              }}
+              style={styles.webMenuItem}
+            >
+              <Text style={styles.webMenuItemIcon}>◉</Text>
+              <Text style={styles.webMenuItemText}>{translations.profile}</Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => setLanguage((current) => (current === 'en' ? 'bn' : 'en'))}
+              style={styles.webMenuItem}
+            >
+              <Text style={styles.webMenuItemIcon}>文</Text>
+              <Text style={styles.webMenuItemText}>{translations.language}</Text>
+              <Text style={styles.webAccountLanguage}>{language === 'en' ? 'বাংলা' : 'English'}</Text>
+            </Pressable>
+            <View style={styles.webMenuDivider} />
+            <Pressable accessibilityRole="button" onPress={logOut} style={styles.webMenuItem}>
+              <Text style={styles.webMenuItemIcon}>↪</Text>
+              <Text style={styles.webMenuLogout}>{translations.logOut}</Text>
+            </Pressable>
+          </View>
+        </View>
+      ) : null}
+      <View style={styles.webMenuTriggerHost}>
         <Pressable
-          accessibilityLabel={webSidebarCollapsed ? 'Expand sidebar' : 'Minimize sidebar'}
+          accessibilityLabel="Open workspace and account menu"
           accessibilityRole="button"
-          onPress={() => setWebSidebarCollapsed((collapsed) => !collapsed)}
-          style={styles.webSidebarToggle}
+          accessibilityState={{ expanded: webMenuOpen }}
+          onPress={() => setWebMenuOpen((open) => !open)}
+          style={styles.webMenuTrigger}
         >
-          <Text style={styles.webSidebarToggleText}>{webSidebarCollapsed ? '›' : '‹'}</Text>
+          <Text style={styles.webMenuTriggerText}>⋮</Text>
         </Pressable>
       </View>
-      <View style={[styles.webBrand, webSidebarCollapsed && styles.webBrandCollapsed]}>
-        <Image
-          source={require('./assets/cwasa-logo.png')}
-          style={[styles.webBrandLogo, webSidebarCollapsed && styles.webBrandLogoCollapsed]}
-          resizeMode="contain"
-        />
-        {!webSidebarCollapsed ? (
-          <View>
-            <Text style={styles.webBrandTitle}>CWASA</Text>
-            <Text style={styles.webBrandCaption}>{translations.meterReading}</Text>
-          </View>
-        ) : null}
-      </View>
-      {!webSidebarCollapsed ? <Text style={styles.webSidebarSection}>WORKSPACE</Text> : null}
-      <Pressable
-        accessibilityLabel={translations.meterReading}
-        onPress={() => setScreen('list')}
-        style={[screen === 'list' || screen === 'completed' ? styles.webNavActive : styles.webNavItem, webSidebarCollapsed && styles.webNavCollapsed]}
-      >
-        <Text style={styles.webNavIcon}>◉</Text>
-        {!webSidebarCollapsed ? (
-          <Text style={screen === 'list' || screen === 'completed' ? styles.webNavActiveText : styles.webNavText}>{translations.meterReading}</Text>
-        ) : null}
-      </Pressable>
-      <Pressable
-        onPress={() => {
-          setServiceMenuOpen((open) => !open);
-          setScreen('sr');
-        }}
-        accessibilityLabel={translations.serviceRequest}
-        style={[
-          screen === 'sr' || screen === 'srnew' || screen === 'srdone' ? styles.webNavActive : styles.webNavItem,
-          webSidebarCollapsed && styles.webNavCollapsed,
-        ]}
-      >
-        <Text style={styles.webNavIcon}>▤</Text>
-        {!webSidebarCollapsed ? (
-          <>
-            <Text style={screen === 'sr' || screen === 'srnew' || screen === 'srdone' ? styles.webNavActiveText : styles.webNavText}>
-              {translations.serviceRequest}
-            </Text>
-            <Text style={styles.webNavChevron}>{serviceMenuOpen ? '▾' : '▸'}</Text>
-          </>
-        ) : null}
-      </Pressable>
-      {serviceMenuOpen && !webSidebarCollapsed ? (
-        <View style={styles.webSubNav}>
-          <Pressable
-            accessibilityRole="tab"
-            accessibilityState={{ selected: screen === 'sr' }}
-            onPress={(event) => {
-              event.stopPropagation();
-              setScreen('sr');
-            }}
-            style={styles.webSubNavItem}
-          >
-            <Text style={screen === 'sr' ? styles.webSubNavTextActive : styles.webSubNavText}>
-              {translations.allServiceRequests}
-            </Text>
-          </Pressable>
-          <Pressable
-            accessibilityRole="tab"
-            accessibilityState={{ selected: screen === 'srnew' }}
-            onPress={(event) => {
-              event.stopPropagation();
-              openCreateServiceRequest();
-            }}
-            style={styles.webSubNavItem}
-          >
-            <Text style={screen === 'srnew' ? styles.webSubNavTextActive : styles.webSubNavText}>
-              {translations.createRequest}
-            </Text>
-          </Pressable>
-        </View>
-      ) : null}
-      {!webSidebarCollapsed ? (
-        <View style={styles.webAccountMenu}>
-          <View style={styles.webAccountIdentity}>
-            <View style={styles.webAccountAvatar}><Text style={styles.webAccountAvatarText}>{authAvatarInitial}</Text></View>
-            <View style={styles.webAccountIdentityText}>
-              <Text style={styles.webAccountName}>{authDisplayName}</Text>
-              <Text style={styles.webAccountMeta}>{authAccountMeta}</Text>
-            </View>
-          </View>
-          <Pressable onPress={() => setScreen('profile')} style={styles.webAccountMenuItem}>
-            <Text style={styles.webAccountMenuText}>{translations.profile}</Text>
-          </Pressable>
-          <Pressable
-            onPress={() => setLanguage((current) => (current === 'en' ? 'bn' : 'en'))}
-            style={styles.webAccountMenuItem}
-          >
-            <Text style={styles.webAccountMenuText}>{translations.language}</Text>
-            <Text style={styles.webAccountLanguage}>{language === 'en' ? 'বাংলা | EN' : 'EN | বাংলা'}</Text>
-          </Pressable>
-          <Pressable onPress={logOut} style={styles.webAccountMenuItem}>
-            <Text style={styles.webAccountLogout}>{translations.logOut}</Text>
-          </Pressable>
-        </View>
-      ) : null}
-      {!webSidebarCollapsed ? (
-        <View style={styles.webSidebarFooter}>
-        </View>
-      ) : null}
-    </View>
+    </>
   );
 
   const renderWebList = () => (
@@ -1948,14 +1914,6 @@ export default function App() {
           <View>
             <Text style={styles.webBreadcrumb}></Text>
             <Text style={styles.webPageTitle}>{translations.meterReading}</Text>
-          </View>
-          <View style={styles.webTopActions}>
-            <Pressable
-              onPress={() => setLanguage((current) => (current === 'en' ? 'bn' : 'en'))}
-              style={styles.webLanguageButton}
-            >
-              <Text style={styles.webLanguageText}>{language === 'en' ? 'বাংলা | EN' : 'EN | বাংলা'}</Text>
-            </Pressable>
           </View>
         </View>
 
@@ -3517,6 +3475,7 @@ export default function App() {
           {screen === 'srnew' && !isWeb ? renderCreateServiceRequest() : null}
           {screen === 'srdone' && isWeb ? renderWebServiceRequestSubmitted() : null}
           {screen === 'srdone' && !isWeb ? renderServiceRequestSubmitted() : null}
+          {isWeb && authUser ? renderWebMenu() : null}
           {!isWeb && drawerOpen ? renderAccountDrawer() : null}
         </View>
       </SafeAreaView>
