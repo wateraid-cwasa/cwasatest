@@ -26,6 +26,23 @@ The Docker image builds the static Expo web export and serves it with Nginx. It 
 
 The browser camera needs camera permission and a secure context. `http://localhost:8080` is treated as secure for local development; when opening the app from another device or deploying it, serve it over HTTPS for camera access.
 
+## Deploy the frontend to Render
+
+The repository-level `render.yaml` configures a Render Static Site that builds
+only this `meter-app/` directory. It publishes Expo's `dist/` web export and
+rewrites app routes to `index.html`; the NestJS backend and its files are not
+part of this static-site build.
+
+In Render, create a **Blueprint** for this Git repository and set
+`EXPO_PUBLIC_API_BASE_URL` to the HTTPS URL of an API deployed separately,
+including its `/api/v1` prefix (for example,
+`https://your-api.example.com/api/v1`). This value is embedded in the frontend
+at build time, so rebuild/redeploy after changing it. The frontend can load
+without an API, but sign-in, readings, account management, and service requests
+require a reachable backend. Configure the backend to allow requests from the
+Render site origin; do not put database credentials or JWT secrets in this
+frontend variable.
+
 ## Run with Expo
 
 ```powershell

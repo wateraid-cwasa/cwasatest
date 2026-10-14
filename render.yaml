@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: cwasa-meter-app
+    runtime: static
+    rootDir: meter-app
+    buildCommand: npm ci && npx expo export --platform web
+    staticPublishPath: ./dist
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: EXPO_PUBLIC_API_BASE_URL
+        sync: false
