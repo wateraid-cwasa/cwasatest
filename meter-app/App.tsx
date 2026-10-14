@@ -964,6 +964,10 @@ export default function App() {
             ? 'The compressed meter photo is too large. Retake the photo and retry.'
             : error instanceof ApiConnectionError
               ? 'Could not connect to the API. Check that the backend is running.'
+              : error instanceof ApiRequestError
+                ? error.status >= 500
+                  ? `The API could not save the reading (HTTP ${error.status}). Check the backend log and database setup.`
+                  : `The API rejected the reading (HTTP ${error.status})${error.responseMessage ? `: ${error.responseMessage}` : '.'}`
               : 'Could not save the reading. Check the API/database setup and retry.',
       );
     } finally {

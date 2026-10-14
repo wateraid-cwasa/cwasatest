@@ -21,7 +21,7 @@ async function bootstrap() {
   app.enableCors({
     origin: (
       process.env.CORS_ORIGINS ??
-      'https://cwasa-meter-app.onrender.com,http://localhost:8081,http://127.0.0.1:8081,http://localhost:8082,http://127.0.0.1:8082,https://cwasa-meter-app.onrender.com'
+      'https://cwasa-meter-app.onrender.com,http://localhost:8081,http://127.0.0.1:8081,http://localhost:8082,http://127.0.0.1:8082'
     )
       .split(',')
       .map((origin) => origin.trim())

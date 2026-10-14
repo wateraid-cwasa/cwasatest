@@ -43,10 +43,18 @@ require a reachable backend. Configure the backend to allow requests from the
 Render site origin; do not put database credentials or JWT secrets in this
 frontend variable.
 
+For a temporary test with a backend running on a development PC, an ngrok
+HTTPS URL can be used as `EXPO_PUBLIC_API_BASE_URL` in Render, but the PC, API,
+and tunnel must stay online. This is not a reliable production API deployment.
+Set `CORS_ORIGINS` on the backend to include
+`https://cwasa-meter-app.onrender.com`, then rebuild the frontend after changing
+its API URL.
+
 ## Run with Expo
 
 ```powershell
 npm ci
+Copy-Item .env.example .env
 npx expo start --web
 ```
 
@@ -59,16 +67,22 @@ npx expo start --android
 ## Connect the standalone backend
 
 The NestJS API is in the sibling `../backend` folder and runs separately from
-this Expo app. Copy `.env.example` to `.env` and configure
-`EXPO_PUBLIC_API_BASE_URL` for the device running Expo:
+this Expo app. Configure the backend separately using
+`../backend/.env.example`. Configure `EXPO_PUBLIC_API_BASE_URL` in this app's
+`.env` for the device running Expo:
 
-- Web on the development PC: `http://localhost:3000/api/v1`
+- Web on the development PC: `http://localhost:3000/api/v1` (the preferred
+  local setup when the backend is running on the same PC)
 - Android emulator: `http://10.0.2.2:3000/api/v1`
 - Physical device: use the development PC's private LAN IP and allow the API
   through the Windows private-network firewall.
 
-Use the deployed API's HTTPS URL for production. Do not expose SQL Server to the
-public internet; only the backend should connect to the databases.
+For the Render website, use the backend's public HTTPS URL in the Render
+frontend environment settings. If testing through ngrok, use its forwarding URL
+with `/api/v1` and add the Render origin to `CORS_ORIGINS` in
+`backend/.env`. Do not place `CORS_ORIGINS` in `meter-app/.env`, and do not
+expose SQL Server to the public internet; only the backend should connect to
+the databases.
 
 The native camera permission is configured in `app.json`. Rebuild the native app after changing native permissions or plugins.
 
