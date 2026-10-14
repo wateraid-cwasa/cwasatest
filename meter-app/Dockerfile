@@ -6,6 +6,8 @@ COPY package.json package-lock.json ./
 RUN npm ci
 
 COPY . .
+ARG EXPO_PUBLIC_API_BASE_URL
+ENV EXPO_PUBLIC_API_BASE_URL=$EXPO_PUBLIC_API_BASE_URL
 RUN npx expo export --platform web
 
 FROM nginx:alpine AS runtime

@@ -8,7 +8,11 @@ export const API_BASE_URL =
 
 export const apiClient = axios.create({
   baseURL: API_BASE_URL,
-  headers: { Accept: 'application/json' },
+  headers: {
+    Accept: 'application/json',
+    // Free ngrok serves an interstitial HTML page unless this header is set.
+    'ngrok-skip-browser-warning': 'true',
+  },
 });
 
 type MeterReaderLoginRequest = {
