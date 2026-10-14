@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+@font-face{font-family:'RBNylo';src:url('fonts/RBNylo-Bold.otf');font-weight:700}
+@font-face{font-family:'Shurjo';src:url('fonts/Shurjo-Regular.ttf');font-weight:400}
+@font-face{font-family:'Shurjo';src:url('fonts/Shurjo-bold.ttf');font-weight:700}
+@font-face{font-family:'Noto Sans';src:local('Noto Sans')}
+body{margin:0;background:#E3E8F2;font-feature-settings:'tnum'}
+a{color:#006AD8}a:hover{color:#0058B6}
+button{font-family:inherit;cursor:pointer}
+</style>
+</helmet>
+<div style="display:flex;gap:32px;justify-content:center;align-items:flex-start;padding:24px;font-family:'Shurjo','Noto Sans',sans-serif;color:#0E1430;flex-wrap:wrap">
+<div style="width:230px;display:flex;flex-direction:column;gap:8px">
+<div style="font-family:'RBNylo','Noto Sans';font-size:22px;color:#151434;margin-bottom:4px">CWASA Meter Reading</div>
+<div style="font-size:14px;color:#5B6275;margin-bottom:8px">Clickable prototype. Jump to any screen:</div>
+<sc-for list="{{ jumps }}" as="j" hint-placeholder-count="10">
+<button onClick="{{ j.go }}" style="text-align:left;padding:10px 14px;border-radius:12px;border:1px solid #CBD3E3;background:#fff;font-size:15px;color:#0E1430" style-hover="background:#E7F1FE">{{ j.label }}</button>
+</sc-for>
+<div style="margin-top:8px;font-size:13px;color:#5B6275">Try: on Enter reading type 4200 (blocked), 4377 (normal), 4450 (high use), 4295 (zero use).</div>
+</div>
+
+<div style="width:390px;height:844px;background:#F4F6FB;border-radius:36px;box-shadow:0 20px 60px rgba(21,20,52,.25);position:relative;overflow:hidden;display:flex;flex-direction:column;flex:none;font-size:16px">
+
+<sc-if value="{{ is.splash }}" hint-placeholder-val="{{ true }}">
+<div onClick="{{ go.signin }}" style="flex:1;background:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;cursor:pointer">
+<img src="assets/cwasa-logo.png" style="width:240px;height:240px;object-fit:contain" alt="CWASA">
+<div style="font-family:'RBNylo';font-size:30px;color:#151434">Meter Reading</div>
+<div style="font-size:22px;font-weight:700;color:#006AD8">মিটার রিডিং</div>
+<div style="font-size:14px;color:#5B6275;margin-top:40px">In partnership with WaterAid</div>
+<div style="font-size:14px;color:#006AD8">Tap to continue</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ is.signin }}">
+<div style="flex:1;background:#fff;padding:20px;display:flex;flex-direction:column;gap:16px">
+<div style="display:flex;justify-content:flex-end"><button onClick="{{ toggleLang }}" style="border:1px solid #CBD3E3;background:#fff;border-radius:12px;padding:10px 14px;font-size:15px;font-weight:700;color:#006AD8;min-height:44px">বাংলা | EN</button></div>
+<img src="assets/cwasa-logo.png" style="width:140px;height:140px;object-fit:contain;align-self:center" alt="CWASA">
+<div style="font-family:'RBNylo';font-size:26px;color:#151434">Sign in</div>
+<label style="display:flex;flex-direction:column;gap:6px;font-size:14px;font-weight:700;color:#151434">Employee ID or mobile number
+<input value="E-10482" style="height:52px;border:1px solid #8A93A8;border-radius:12px;padding:0 14px;font-size:17px;font-family:inherit"></label>
+<label style="display:flex;flex-direction:column;gap:6px;font-size:14px;font-weight:700;color:#151434">Password
+<input type="password" value="password" style="height:52px;border:1px solid #8A93A8;border-radius:12px;padding:0 14px;font-size:17px;font-family:inherit"></label>
+<div style="flex:1"></div>
+<button style="background:none;border:none;color:#006AD8;font-size:16px;font-weight:700;min-height:44px">Sign in with fingerprint</button>
+<button onClick="{{ go.list }}" style="height:56px;border-radius:12px;border:none;background:#006AD8;color:#fff;font-size:18px;font-weight:700">Sign in</button>
+</div>
+</sc-if>
+
+<sc-if value="{{ is.list }}">
+<div style="background:#0058B6;padding:14px 20px;display:flex;align-items:center;gap:12px;color:#fff">
+<button onClick="{{ go.drawer }}" aria-label="Menu" style="width:44px;height:44px;border:none;background:none;color:#fff;font-size:26px">☰</button>
+<div style="flex:1;font-family:'RBNylo';font-size:20px">{{ t.meterReading }}</div>
+<div style="font-size:22px">⌕</div><div style="font-size:20px">🔔︎</div>
+</div>
+<div style="background:#E7F1FE;padding:8px 20px;font-size:14px;color:#0E1430;display:flex;justify-content:space-between"><span>⟳ Last sync 1:20 pm</span><span>3 waiting to upload</span></div>
+<div style="display:flex;background:#fff;border-bottom:1px solid #DDE3EF">
+<div style="flex:1;text-align:center;padding:14px 0;font-weight:700;color:#006AD8;border-bottom:3px solid #006AD8">{{ t.pending }} 629</div>
+<div style="flex:1;text-align:center;padding:14px 0;color:#5B6275">{{ t.completed }} 2143</div>
+<div style="flex:1;text-align:center;padding:14px 0;color:#5B6275">{{ t.map }}</div>
+</div>
+<div style="padding:12px 20px 0;display:flex;flex-direction:column;gap:10px">
+<div style="height:48px;background:#fff;border:1px solid #CBD3E3;border-radius:12px;display:flex;align-items:center;padding:0 14px;color:#5B6275;font-size:16px">⌕&nbsp; {{ t.search }}: name, account, meter</div>
+<div style="display:flex;gap:8px;overflow:hidden"><span style="padding:8px 14px;border-radius:20px;background:#E7F1FE;color:#0058B6;font-size:14px;font-weight:700">Ward ▾</span><span style="padding:8px 14px;border-radius:20px;background:#fff;border:1px solid #CBD3E3;font-size:14px">Area ▾</span><span style="padding:8px 14px;border-radius:20px;background:#fff;border:1px solid #CBD3E3;font-size:14px">Sort: Route ▾</span></div>
+</div>
+<div style="flex:1;overflow:auto;padding:12px 20px;display:flex;flex-direction:column;gap:10px">
+<sc-for list="{{ rows }}" as="r" hint-placeholder-count="5">
+<div onClick="{{ r.open }}" style="background:#fff;border-radius:16px;padding:14px;border:1px solid #DDE3EF;display:flex;gap:10px;cursor:pointer">
+<div style="flex:1;display:flex;flex-direction:column;gap:3px">
+<sc-if value="{{ r.flag }}"><span style="align-self:flex-start;background:#FFF3C4;color:#0E1430;font-size:13px;font-weight:700;padding:3px 8px;border-radius:8px">⚑ Complaint: reading not taken</span></sc-if>
+<div style="font-weight:700;font-size:17px;color:#151434">{{ r.name }}</div>
+<div style="font-size:14px;color:#3E4660">{{ r.addr }}</div>
+<div style="font-size:13px;color:#3E4660">A/C {{ r.acc }} · Meter {{ r.meter }}</div></div>
+<div style="text-align:right"><div style="font-weight:700;font-size:18px;color:{{ r.color }}">{{ r.amt }}</div><div style="font-size:13px;color:#3E4660">{{ r.dueLabel }}</div></div>
+</div>
+</sc-for>
+</div>
+<div style="display:flex;background:#fff;border-top:1px solid #DDE3EF;padding:8px 0 14px">
+<div style="flex:1;text-align:center;color:#006AD8;font-weight:700;font-size:14px"><div style="font-size:22px">◉</div>{{ t.meterReading }}</div>
+<div onClick="{{ go.sr }}" style="flex:1;text-align:center;color:#3E4660;font-size:14px;cursor:pointer"><div style="font-size:22px">▤</div>{{ t.serviceRequest }}</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ is.detail }}">
+<div style="background:#0058B6;padding:14px 20px;display:flex;align-items:center;gap:8px;color:#fff">
+<button onClick="{{ go.list }}" aria-label="Back" style="width:44px;height:44px;border:none;background:none;color:#fff;font-size:26px">←</button>
+<div style="font-family:'RBNylo';font-size:20px">{{ t.customerDetails }}</div></div>
+<div style="display:flex;background:#fff;border-bottom:1px solid #DDE3EF">
+<div style="flex:1;text-align:center;padding:14px 0;font-weight:700;color:#006AD8;border-bottom:3px solid #006AD8">{{ t.generateBill }}</div>
+<div style="flex:1;text-align:center;padding:14px 0;color:#5B6275">{{ t.history }}</div></div>
+<div style="flex:1;overflow:auto;padding:16px 20px;display:flex;flex-direction:column;gap:14px">
+<div style="background:#fff;border-radius:16px;padding:16px;border:1px solid #DDE3EF;display:flex;flex-direction:column;gap:6px">
+<div style="display:flex;justify-content:space-between;align-items:flex-start"><div style="display:flex;gap:6px"><span style="background:#E7F1FE;color:#0058B6;font-size:13px;font-weight:700;padding:3px 10px;border-radius:8px">Domestic</span><span style="background:#E7F1FE;color:#0058B6;font-size:13px;font-weight:700;padding:3px 10px;border-radius:8px">Metered</span></div>
+<div style="text-align:right"><div style="font-size:22px;font-weight:700;color:#D62828">৳1,771</div><div style="font-size:13px;color:#3E4660">Due</div></div></div>
+<div style="font-size:20px;font-weight:700;color:#151434">Mr Kamal Hossain</div>
+<div style="font-size:15px;color:#3E4660">712 Mowllapara North, Agrabad, Chattogram</div>
+<div style="font-size:15px;color:#3E4660">✆ Not on file</div></div>
+<div style="background:#fff;border-radius:16px;padding:6px 16px;border:1px solid #DDE3EF;font-size:15px">
+<div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid #EEF1F7"><span style="color:#3E4660">{{ t.account }}</span><b>310245</b></div>
+<div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid #EEF1F7"><span style="color:#3E4660">Area</span><b>Dewan Hat</b></div>
+<div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid #EEF1F7"><span style="color:#3E4660">{{ t.ward }}</span><b>24</b></div>
+<div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid #EEF1F7"><span style="color:#3E4660">{{ t.meterNo }}</span><b>2004517K</b></div>
+<div style="display:flex;justify-content:space-between;padding:10px 0"><span style="color:#3E4660">{{ t.connSize }}</span><b>3/4 inch</b></div></div>
+<div style="background:#fff;border-radius:16px;padding:16px;border:1px solid #DDE3EF"><div style="font-size:14px;color:#3E4660">{{ t.prev }} (m³) · 31/08/2026</div><div style="font-size:34px;font-weight:700;color:#151434">4,295.00</div></div>
+<div style="background:#E3F4EA;color:#14532D;border-radius:12px;padding:12px 14px;font-size:15px;font-weight:700">✓ You are near the customer · 12 m</div>
+</div>
+<div style="padding:12px 20px 20px;background:#fff;border-top:1px solid #DDE3EF"><button onClick="{{ go.camera }}" style="width:100%;height:56px;border-radius:12px;border:none;background:#006AD8;color:#fff;font-size:18px;font-weight:700">◉ {{ t.takePhoto }}</button></div>
+</sc-if>
+
+<sc-if value="{{ is.camera }}">
+<div style="flex:1;background:#14182B;display:flex;flex-direction:column;align-items:center;color:#fff;padding:20px">
+<div style="align-self:flex-end;font-size:15px;min-height:44px;display:flex;align-items:center">⚡ Flash</div>
+<div style="font-size:17px;font-weight:700;text-align:center;margin:8px 0 20px">Fit the whole meter face inside the frame</div>
+<div style="width:300px;height:300px;border:3px dashed #FFC809;border-radius:20px;display:flex;align-items:center;justify-content:center;background:#222845;font-size:14px;color:#C9D0E6;text-align:center;padding:20px">[ Live camera view<br>meter photo placeholder ]</div>
+<div style="flex:1"></div>
+<div style="font-size:14px;color:#C9D0E6;margin-bottom:14px;text-align:center">Date, time and location are added automatically.</div>
+<button onClick="{{ go.enter }}" aria-label="Take photo" style="width:84px;height:84px;border-radius:50%;border:6px solid #fff;background:#006AD8;margin-bottom:12px"></button>
+<button onClick="{{ go.detail }}" style="background:none;border:none;color:#fff;font-size:16px;min-height:44px">Cancel</button>
+</div>
+</sc-if>
+
+<sc-if value="{{ is.enter }}">
+<div style="background:#0058B6;padding:10px 20px 12px;color:#fff;display:flex;align-items:center;gap:8px">
+<button onClick="{{ go.detail }}" aria-label="Back" style="width:44px;height:44px;border:none;background:none;color:#fff;font-size:26px">←</button>
+<div><div style="font-weight:700;font-size:17px">Mr Kamal Hossain</div><div style="font-size:13px">A/C 310245 · Meter 2004517K</div></div></div>
+<div style="flex:1;overflow:auto;padding:16px 20px;display:flex;flex-direction:column;gap:14px">
+<div style="display:flex;gap:12px;align-items:center"><div style="width:64px;height:64px;border-radius:12px;background:#222845;color:#C9D0E6;font-size:11px;display:flex;align-items:center;justify-content:center;text-align:center">Meter photo</div><button onClick="{{ go.camera }}" style="background:none;border:none;color:#006AD8;font-weight:700;font-size:15px;min-height:44px">Retake</button>
+<div style="flex:1;text-align:right"><div style="font-size:13px;color:#3E4660">{{ t.prev }} (m³) · 31/08/26</div><div style="font-size:22px;font-weight:700;color:#3E4660">4,295.00</div></div></div>
+<div style="background:#fff;border:2px solid {{ borderColor }};border-radius:16px;padding:14px 16px">
+<div style="font-size:14px;font-weight:700;color:#151434">{{ t.current }} (m³)</div>
+<input inputmode="decimal" value="{{ reading }}" onInput="{{ onReading }}" style="width:100%;box-sizing:border-box;border:none;outline:none;font-size:40px;font-weight:700;color:#151434;font-family:inherit;padding:6px 0;font-feature-settings:'tnum'">
+<div style="font-size:14px;color:#3E4660">Type the number shown on the meter.</div></div>
+<sc-if value="{{ st.block }}">
+<div style="background:#FDE8E8;border:1px solid #D62828;border-radius:12px;padding:12px 14px;font-size:15px;color:#7A1111;font-weight:700">✕ This reading is lower than the last one (4,295.00). Check the number.
+<div style="display:flex;flex-direction:column;gap:8px;margin-top:10px"><button style="min-height:48px;border-radius:12px;border:1px solid #D62828;background:#fff;color:#7A1111;font-size:15px;font-weight:700">Meter counter restarted from zero</button><button style="min-height:48px;border-radius:12px;border:1px solid #D62828;background:#fff;color:#7A1111;font-size:15px;font-weight:700">Meter was replaced</button></div></div></sc-if>
+<sc-if value="{{ st.high }}">
+<div style="background:#FFF3C4;border:1px solid #B88A00;border-radius:12px;padding:12px 14px;font-size:15px;color:#3D2E00;font-weight:700">⚠ This is much higher than usual (average 70 m³, this month {{ useText }} m³). Please check the reading and the photo.
+<div style="margin-top:8px;font-weight:400">☐ I checked this reading · Remarks required · This bill will go to a supervisor for approval.</div></div></sc-if>
+<sc-if value="{{ st.zero }}">
+<div style="background:#FFF3C4;border:1px solid #B88A00;border-radius:12px;padding:12px 14px;font-size:15px;color:#3D2E00;font-weight:700">⚠ Use is 0 m³. Is the meter stopped?<div style="margin-top:8px;font-weight:400">☐ I checked this reading</div></div></sc-if>
+<div style="background:#E7F1FE;border-radius:16px;padding:14px 16px;display:flex;justify-content:space-between;align-items:center"><div><div style="font-size:14px;font-weight:700;color:#0058B6">{{ t.use }} (m³)</div><div style="font-size:13px;color:#3E4660">Calculated for you</div></div><div style="font-size:36px;font-weight:700;color:#0058B6">{{ useText }}</div></div>
+<div style="background:#fff;border:1px solid #CBD3E3;border-radius:12px;padding:14px;display:flex;justify-content:space-between;font-size:16px"><span><span style="font-size:13px;color:#3E4660;display:block">{{ t.condition }}</span>Working normally</span><span>▾</span></div>
+<div style="font-size:15px;color:#006AD8;font-weight:700">+ More details (mobile number, {{ t.remarks }})</div>
+</div>
+<div style="padding:12px 20px 20px;background:#fff;border-top:1px solid #DDE3EF"><button onClick="{{ go.review }}" disabled="{{ st.disabled }}" style="width:100%;height:56px;border-radius:12px;border:none;background:{{ btnBg }};color:#fff;font-size:18px;font-weight:700">{{ t.review }}</button></div>
+</sc-if>
+
+<sc-if value="{{ is.review }}">
+<div style="background:#0058B6;padding:14px 20px;display:flex;align-items:center;gap:8px;color:#fff"><button onClick="{{ go.enter }}" aria-label="Back" style="width:44px;height:44px;border:none;background:none;color:#fff;font-size:26px">←</button><div style="font-family:'RBNylo';font-size:20px">Review</div></div>
+<div style="flex:1;padding:16px 20px;display:flex;flex-direction:column;gap:14px">
+<div style="background:#fff;border-radius:16px;border:1px solid #DDE3EF;padding:16px;display:flex;flex-direction:column;gap:12px;font-size:15px">
+<div style="display:flex;justify-content:space-between"><b style="font-size:18px">Mr Kamal Hossain</b><a>Edit</a></div>
+<div style="display:flex;justify-content:space-between"><span style="color:#3E4660">Meter</span><b>2004517K</b></div>
+<div style="display:flex;justify-content:space-between"><span style="color:#3E4660">{{ t.prev }}</span><b>4,295.00</b></div>
+<div style="display:flex;justify-content:space-between;align-items:center"><span style="color:#3E4660">{{ t.current }}</span><b style="font-size:28px">{{ readingFmt }}</b></div>
+<div style="display:flex;justify-content:space-between;align-items:center"><span style="color:#3E4660">{{ t.use }}</span><b style="font-size:28px;color:#0058B6">{{ useText }} m³</b></div>
+<div style="display:flex;justify-content:space-between"><span style="color:#3E4660">{{ t.condition }}</span><b>Working normally</b></div>
+<div style="display:flex;justify-content:space-between;align-items:center"><span style="color:#3E4660">Photo</span><span style="width:48px;height:48px;border-radius:8px;background:#222845"></span></div></div>
+</div>
+<div style="padding:12px 20px 20px;background:#fff;border-top:1px solid #DDE3EF"><button onClick="{{ go.saved }}" style="width:100%;height:56px;border-radius:12px;border:none;background:#006AD8;color:#fff;font-size:18px;font-weight:700">{{ t.save }}</button><div style="text-align:center;font-size:14px;color:#3E4660;margin-top:8px">Saved on your phone. It will upload when you have signal.</div></div>
+</sc-if>
+
+<sc-if value="{{ is.saved }}">
+<div style="flex:1;padding:40px 20px 16px;display:flex;flex-direction:column;gap:16px;align-items:center">
+<div style="width:72px;height:72px;border-radius:50%;background:#E3F4EA;color:#2E8B57;font-size:40px;display:flex;align-items:center;justify-content:center">✓</div>
+<div style="font-family:'RBNylo';font-size:26px;color:#151434">Reading saved</div>
+<div style="width:100%;box-sizing:border-box;background:#fff;border-radius:16px;border:1px solid #DDE3EF;padding:16px;display:flex;flex-direction:column;gap:10px;font-size:16px">
+<div style="display:flex;justify-content:space-between;align-items:center"><span>{{ t.use }}</span><b style="font-size:24px">{{ useText }} m³</b></div>
+<div style="display:flex;justify-content:space-between"><span>Water charge</span><b>৳1,697</b></div>
+<div style="display:flex;justify-content:space-between"><span>Previous due</span><b>৳1,771</b></div>
+<div style="display:flex;justify-content:space-between;align-items:center;border-top:1px solid #DDE3EF;padding-top:10px"><span>{{ t.totalDue }}</span><b style="font-size:32px;color:#D62828">৳3,468</b></div></div>
+<span style="background:#FFF3C4;color:#3D2E00;font-weight:700;font-size:14px;padding:6px 12px;border-radius:20px">⟳ {{ t.waiting }}</span>
+<div style="font-size:14px;color:#3E4660">Final amount is confirmed after upload.</div>
+<div style="width:100%;box-sizing:border-box;border:1px dashed #8A93A8;border-radius:12px;padding:12px;text-align:center;font-size:14px;color:#3E4660">Share bill (to be decided)</div>
+</div>
+<div style="padding:12px 20px 20px;background:#fff;border-top:1px solid #DDE3EF;display:flex;flex-direction:column;gap:4px"><button onClick="{{ go.list }}" style="width:100%;height:56px;border-radius:12px;border:none;background:#006AD8;color:#fff;font-size:18px;font-weight:700">{{ t.next }}</button><button onClick="{{ go.list }}" style="background:none;border:none;color:#006AD8;font-size:16px;font-weight:700;min-height:44px">Back to list</button></div>
+</sc-if>
+
+<sc-if value="{{ is.sr }}">
+<div style="background:#0058B6;padding:14px 20px;color:#fff;font-family:'RBNylo';font-size:20px">{{ t.serviceRequest }}</div>
+<div style="display:flex;background:#fff;border-bottom:1px solid #DDE3EF"><div style="flex:1;text-align:center;padding:14px 0;font-weight:700;color:#006AD8;border-bottom:3px solid #006AD8">{{ t.pending }} 109</div><div style="flex:1;text-align:center;padding:14px 0;color:#5B6275">{{ t.completed }} 18</div></div>
+<div style="flex:1;overflow:auto;padding:12px 20px;display:flex;flex-direction:column;gap:10px;position:relative">
+<sc-for list="{{ srRows }}" as="r" hint-placeholder-count="4">
+<div style="background:#fff;border-radius:16px;padding:14px;border:1px solid #DDE3EF"><div style="font-weight:700;font-size:17px;color:#151434">{{ r.name }}</div><div style="font-size:14px;color:#3E4660">{{ r.addr }}</div><div style="font-size:14px;font-weight:700;color:#D62828;margin-top:4px">⚠ {{ r.type }}</div></div>
+</sc-for></div>
+<button onClick="{{ go.srnew }}" aria-label="Create service request" style="position:absolute;right:20px;bottom:96px;width:60px;height:60px;border-radius:50%;border:none;background:#2E8B57;color:#fff;font-size:32px;box-shadow:0 6px 16px rgba(0,0,0,.25)">+</button>
+<div style="display:flex;background:#fff;border-top:1px solid #DDE3EF;padding:8px 0 14px">
+<div onClick="{{ go.list }}" style="flex:1;text-align:center;color:#3E4660;font-size:14px;cursor:pointer"><div style="font-size:22px">◉</div>{{ t.meterReading }}</div>
+<div style="flex:1;text-align:center;color:#006AD8;font-weight:700;font-size:14px"><div style="font-size:22px">▤</div>{{ t.serviceRequest }}</div></div>
+</sc-if>
+
+<sc-if value="{{ is.srnew }}">
+<div style="background:#0058B6;padding:14px 20px;display:flex;align-items:center;gap:8px;color:#fff"><button onClick="{{ go.sr }}" aria-label="Back" style="width:44px;height:44px;border:none;background:none;color:#fff;font-size:26px">←</button><div style="font-family:'RBNylo';font-size:20px">Create service request</div></div>
+<div style="flex:1;overflow:auto;padding:16px 20px;display:flex;flex-direction:column;gap:14px">
+<label style="display:flex;flex-direction:column;gap:6px;font-size:14px;font-weight:700;color:#151434">Meter or account number<input value="2004517K" style="height:52px;border:1px solid #8A93A8;border-radius:12px;padding:0 14px;font-size:17px;font-family:inherit"></label>
+<div style="background:#E3F4EA;border-radius:12px;padding:12px 14px;font-size:15px"><b>Mr Kamal Hossain</b><br>712 Mowllapara North, Agrabad</div>
+<div style="background:#fff;border:1px solid #8A93A8;border-radius:12px;padding:12px 14px;display:flex;justify-content:space-between"><span><span style="font-size:13px;color:#3E4660;display:block">Problem type</span>Meter defective</span><span>▾</span></div>
+<div><div style="font-size:14px;font-weight:700;color:#151434;margin-bottom:6px">Photos <span style="font-weight:400;color:#3E4660">· Photo needed for this problem</span></div>
+<div style="display:flex;gap:10px"><div style="flex:1;height:76px;border:2px dashed #006AD8;border-radius:12px;display:flex;align-items:center;justify-content:center;text-align:center;font-size:13px;color:#0058B6;font-weight:700">◉ Take photo</div><div style="flex:1;height:76px;border:1px dashed #8A93A8;border-radius:12px;display:flex;align-items:center;justify-content:center;text-align:center;font-size:13px;color:#3E4660">Choose from gallery</div></div></div>
+<label style="display:flex;flex-direction:column;gap:6px;font-size:14px;font-weight:700;color:#151434">Description<textarea style="height:80px;border:1px solid #8A93A8;border-radius:12px;padding:12px;font-size:16px;font-family:inherit">Meter glass cracked, dial hard to read.</textarea><span style="font-weight:400;color:#3E4660;text-align:right">38 / 500</span></label>
+</div>
+<div style="padding:12px 20px 20px;background:#fff;border-top:1px solid #DDE3EF"><button onClick="{{ go.srdone }}" style="width:100%;height:56px;border-radius:12px;border:none;background:#006AD8;color:#fff;font-size:18px;font-weight:700">Create request</button></div>
+</sc-if>
+
+<sc-if value="{{ is.srdone }}">
+<div style="flex:1;padding:60px 20px 16px;display:flex;flex-direction:column;gap:16px;align-items:center;text-align:center">
+<div style="width:72px;height:72px;border-radius:50%;background:#E3F4EA;color:#2E8B57;font-size:40px;display:flex;align-items:center;justify-content:center">✓</div>
+<div style="font-family:'RBNylo';font-size:26px;color:#151434">Request submitted</div>
+<div style="font-size:24px;font-weight:700;color:#0058B6">SR-261006-0001</div>
+<div style="font-size:15px;color:#3E4660">Routed to MOD-1 Agrabad</div>
+<span style="background:#FFF3C4;color:#3D2E00;font-weight:700;font-size:14px;padding:6px 12px;border-radius:20px">⟳ Pending</span></div>
+<div style="padding:12px 20px 20px;background:#fff;border-top:1px solid #DDE3EF;display:flex;flex-direction:column;gap:4px"><button onClick="{{ go.sr }}" style="width:100%;height:56px;border-radius:12px;border:none;background:#006AD8;color:#fff;font-size:18px;font-weight:700">Back to list</button><button onClick="{{ go.srnew }}" style="background:none;border:none;color:#006AD8;font-size:16px;font-weight:700;min-height:44px">Create another</button></div>
+</sc-if>
+
+<sc-if value="{{ is.drawer }}">
+<div style="flex:1;background:#fff;padding:20px;display:flex;flex-direction:column;gap:6px;width:320px">
+<button onClick="{{ go.list }}" aria-label="Close" style="align-self:flex-start;width:44px;height:44px;border:none;background:none;font-size:26px">✕</button>
+<div style="display:flex;align-items:center;gap:14px;margin:8px 0 20px"><div style="width:64px;height:64px;border-radius:50%;background:#E7F1FE;color:#006AD8;font-size:30px;display:flex;align-items:center;justify-content:center">◔</div><div><div style="font-size:19px;font-weight:700;color:#151434">Md Jahed</div><div style="font-size:14px;color:#3E4660">E-10482 · MOD-1 Agrabad</div></div></div>
+<div style="padding:14px 0;font-size:17px;border-bottom:1px solid #EEF1F7">Profile</div>
+<div style="padding:14px 0;font-size:17px;border-bottom:1px solid #EEF1F7">Register Fingerprint</div>
+<div style="padding:10px 0;font-size:17px;border-bottom:1px solid #EEF1F7;display:flex;justify-content:space-between;align-items:center">{{ t.language }}<button onClick="{{ toggleLang }}" style="border:1px solid #CBD3E3;background:#fff;border-radius:20px;padding:10px 16px;font-weight:700;color:#006AD8;min-height:44px">বাংলা | EN</button></div>
+<div style="padding:14px 0;font-size:17px;color:#D62828">{{ t.logout }}</div>
+<div style="flex:1"></div>
+<button onClick="{{ go.list }}" style="height:56px;border-radius:12px;border:none;background:#006AD8;color:#fff;font-size:18px;font-weight:700">⟳ {{ t.sync }}</button>
+<div style="text-align:center;font-size:14px;color:#3E4660;margin-top:6px">Last sync 1:20 pm · 3 waiting to upload</div>
+</div>
+<div onClick="{{ go.list }}" style="position:absolute;right:0;top:0;bottom:0;width:70px;background:rgba(21,20,52,.5)"></div>
+</sc-if>
+
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  state = { screen: 'splash', reading: '4377.00', bn: false };
+  renderVals() {
+    const s = this.state, scr = s.screen;
+    const names = ['splash','signin','list','detail','camera','enter','review','saved','sr','srnew','srdone','drawer'];
+    const go = {}, is = {};
+    names.forEach(n => { go[n] = () => this.setState({ screen: n }); is[n] = scr === n; });
+    const prev = 4295, cur = parseFloat(s.reading);
+    const ok = !isNaN(cur);
+    const use = ok ? cur - prev : 0;
+    const fmt = n => n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const block = ok && use < 0, high = ok && use >= 100, zero = ok && use === 0;
+    const st = { block, high, zero, disabled: !ok || block };
+    const bn = s.bn;
+    const T = (e, b) => bn ? b : e;
+    const t = {
+      meterReading: T('Meter Reading','মিটার রিডিং'), serviceRequest: T('Service Request','সার্ভিস অনুরোধ'),
+      pending: T('Pending','অপেক্ষমাণ'), completed: T('Completed','সম্পন্ন'), map: T('Map','মানচিত্র'), search: T('Search','খুঁজুন'),
+      customerDetails: T('Customer Details','গ্রাহকের তথ্য'), generateBill: T('Generate Bill','বিল তৈরি করুন'), history: T('History','ইতিহাস'),
+      account: T('Account Number','হিসাব নম্বর'), meterNo: T('Meter No.','মিটার নম্বর'), ward: T('Ward No.','ওয়ার্ড নম্বর'), connSize: T('Connection Size','সংযোগের আকার'),
+      prev: T('Previous Reading','পূর্ববর্তী রিডিং'), current: T('Current Reading','বর্তমান রিডিং'), use: T('Use this cycle','এই মাসের ব্যবহার'),
+      takePhoto: T('Take meter photo','মিটারের ছবি তুলুন'), condition: T('Meter condition','মিটারের অবস্থা'), remarks: T('Remarks','মন্তব্য'),
+      review: T('Review','যাচাই করুন'), save: T('Save reading','রিডিং সংরক্ষণ করুন'), next: T('Next customer','পরবর্তী গ্রাহক'),
+      totalDue: T('Total due','মোট বকেয়া'), sync: T('Sync data','ডেটা সিঙ্ক করুন'), waiting: T('Waiting to upload','আপলোডের অপেক্ষায়'),
+      language: T('Language','ভাষা'), logout: T('Log Out','লগ আউট')
+    };
+    const open = () => this.setState({ screen: 'detail' });
+    const R = (name, addr, acc, meter, amt, flag) => ({ name, addr, acc, meter, flag, open,
+      amt: amt ? '৳' + amt : '৳0', color: amt ? '#D62828' : '#2E8B57', dueLabel: amt ? 'Due' : 'No due' });
+    const rows = [
+      R('Mr Kamal Hossain','712 Mowllapara North, Agrabad','310245','2004517K','1,771',true),
+      R('Ms Rehana Akter','House 14, Road 3, Dewan Hat','310318','2004602K','4,240',true),
+      R('Mr Shafiqul Alam','22 Double Mooring Lane','311090','2005118K','0',false),
+      R('Mr Abdul Karim','5/A Mansurabad Housing','311457','2003876K','1,05,741',false),
+      R('Ms Nasrin Sultana','88 Agrabad C/A, Block B','312004','2006241K','2,310',false),
+      R('Mr Jahangir Alam','Dewan Hat Bazar Road','312233','2004990K','940',false)
+    ];
+    const srRows = [
+      { name:'Mr Kamal Hossain', addr:'712 Mowllapara North, Agrabad', type:'Meter defective' },
+      { name:'Ms Rehana Akter', addr:'House 14, Road 3, Dewan Hat', type:'Meter stopped' },
+      { name:'Mr Abdul Karim', addr:'5/A Mansurabad Housing', type:'Glass broken' }
+    ];
+    const jl = [['Sign in','signin'],['Pending list','list'],['Customer details','detail'],['Camera','camera'],['Enter reading','enter'],['Review','review'],['Reading saved','saved'],['Service requests','sr'],['Create request','srnew'],['Request submitted','srdone'],['Side menu','drawer']];
+    const jumps = jl.map(([label, n]) => ({ label, go: go[n] }));
+    return {
+      go, is, st, t, rows, srRows, jumps,
+      reading: s.reading, readingFmt: ok ? fmt(cur) : '—', useText: fmt(use),
+      onReading: e => this.setState({ reading: e.target.value }),
+      toggleLang: () => this.setState({ bn: !s.bn }),
+      borderColor: block ? '#D62828' : (high || zero) ? '#B88A00' : '#006AD8',
+      btnBg: st.disabled ? '#9AA3B8' : '#006AD8'
+    };
+  }
+}
+</script>
+</body>
+</html>
