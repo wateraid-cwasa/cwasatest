@@ -1,0 +1,50 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../../src/generated/platform"
+}
+
+datasource db {
+  provider = "sqlserver"
+  schemas  = ["app"]
+}
+
+model AdminAccount {
+  adminId           String                      @id @default(dbgenerated("newsequentialid()")) @map("AdminId") @db.UniqueIdentifier
+  username          String                      @unique(map: "UQ_App_AdminAccounts_Username") @map("Username") @db.NVarChar(100)
+  passwordHash      String                      @map("PasswordHash") @db.NVarChar(255)
+  isActive          Boolean                     @default(true) @map("IsActive")
+  createdAt         DateTime                    @default(dbgenerated("sysutcdatetime()")) @map("CreatedAt") @db.DateTime2
+  updatedAt         DateTime                    @default(dbgenerated("sysutcdatetime()")) @map("UpdatedAt") @db.DateTime2
+  createdCredentials MeterInspectorCredential[] @relation("CredentialCreatedBy")
+  updatedCredentials MeterInspectorCredential[] @relation("CredentialUpdatedBy")
+
+  @@map("AdminAccounts")
+  @@schema("app")
+}
+
+model MeterInspectorCredential {
+  readerCode       String       @id @map("RICODE") @db.NVarChar(255)
+  passwordHash     String       @map("PasswordHash") @db.NVarChar(255)
+  isActive         Boolean      @default(true) @map("IsActive")
+  createdAt        DateTime     @default(dbgenerated("sysutcdatetime()")) @map("CreatedAt") @db.DateTime2
+  updatedAt        DateTime     @default(dbgenerated("sysutcdatetime()")) @map("UpdatedAt") @db.DateTime2
+  createdByAdminId String       @map("CreatedByAdminId") @db.UniqueIdentifier
+  updatedByAdminId String       @map("UpdatedByAdminId") @db.UniqueIdentifier
+  createdByAdmin   AdminAccount @relation("CredentialCreatedBy", fields: [createdByAdminId], references: [adminId], onDelete: NoAction, onUpdate: NoAction)
+  updatedByAdmin   AdminAccount @relation("CredentialUpdatedBy", fields: [updatedByAdminId], references: [adminId], onDelete: NoAction, onUpdate: NoAction)
+
+  @@map("MeterInspectorCredentials")
+  @@schema("app")
+}
+
+model CustomerOtp {
+  accountNo String   @id @map("AccountNo") @db.NVarChar(255)
+  mobileNo  String   @map("MobileNo") @db.NVarChar(255)
+  otpHash   String   @map("OtpHash") @db.NVarChar(255)
+  expiresAt DateTime @map("ExpiresAt") @db.DateTime2
+  attempts  Int      @default(0) @map("Attempts")
+  createdAt DateTime @default(dbgenerated("sysutcdatetime()")) @map("CreatedAt") @db.DateTime2
+
+  @@map("CustomerOtps")
+  @@schema("app")
+}

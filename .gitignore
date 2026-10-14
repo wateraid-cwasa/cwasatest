@@ -1,0 +1,23 @@
+# Dependencies and build output
+**/node_modules/
+**/dist/
+**/coverage/
+**/.expo/
+**/web-build/
+**/*.tsbuildinfo
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+
+# Local data and generated native project
+/uploads/
+/meter-app/android/
+/backend/NUL
+
+# Temporary nested Git metadata used while creating the combined repository
+/meter-app/.nested-git-backup/

@@ -1,0 +1,70 @@
+# CWASA Meter Reading App
+
+Frontend-first Expo app for web, iOS, and Android. The web interface uses React Native Web; platform-specific camera access is provided by Expo Camera.
+
+## Run the web preview with Docker
+
+Install and start Docker Desktop, then run these commands from this project folder:
+
+```powershell
+docker compose up --build
+```
+
+Open [http://localhost:8080](http://localhost:8080). Stop the container with `Ctrl+C`. To start it in the background, use:
+
+```powershell
+docker compose up --build -d
+```
+
+Stop and remove the container with:
+
+```powershell
+docker compose down
+```
+
+The Docker image builds the static Expo web export and serves it with Nginx. It does not run the iOS/Android app or a backend. The Meter Reading screen lists the signed-in inspector's submitted readings awaiting administrator review; the Completed screen lists that inspector's approved readings. Administrators can review and approve submissions from the admin panel.
+
+The browser camera needs camera permission and a secure context. `http://localhost:8080` is treated as secure for local development; when opening the app from another device or deploying it, serve it over HTTPS for camera access.
+
+## Run with Expo
+
+```powershell
+npm ci
+npx expo start --web
+```
+
+For Android, connect a device with USB debugging enabled or start an Android emulator, then run:
+
+```powershell
+npx expo start --android
+```
+
+## Connect the standalone backend
+
+The NestJS API is in the sibling `../backend` folder and runs separately from
+this Expo app. Copy `.env.example` to `.env` and configure
+`EXPO_PUBLIC_API_BASE_URL` for the device running Expo:
+
+- Web on the development PC: `http://localhost:3000/api/v1`
+- Android emulator: `http://10.0.2.2:3000/api/v1`
+- Physical device: use the development PC's private LAN IP and allow the API
+  through the Windows private-network firewall.
+
+Use the deployed API's HTTPS URL for production. Do not expose SQL Server to the
+public internet; only the backend should connect to the databases.
+
+The native camera permission is configured in `app.json`. Rebuild the native app after changing native permissions or plugins.
+
+New Reading looks up accounts/meters and the latest bill through the source
+database views. It reads real device GPS coordinates and requires a meter photo
+from the camera or gallery. Both photo sources are resized and compressed to
+JPEG (up to a 1280-pixel edge and under 1 MB) before being sent to the backend.
+The backend stores the reading and photo in `CWASABILL_PLATFORM_TEST`; see the
+backend README for the required SQL scripts. On web, allow location access and
+run from localhost or HTTPS.
+
+Service requests are created through the authenticated backend and stored in
+`app.ServiceRequests` in `CWASABILL_PLATFORM_TEST`. Run the backend's
+`sql/service-requests.sql` script before using this feature. Inspectors can
+look up only customers assigned to their RICODE, attach an optional compressed
+photo, submit problem details, and filter their saved requests by status.

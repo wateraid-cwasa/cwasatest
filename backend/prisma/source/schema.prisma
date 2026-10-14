@@ -1,0 +1,9 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../../src/generated/source"
+}
+
+datasource db {
+  provider = "sqlserver"
+  schemas  = ["platform"]
+}
