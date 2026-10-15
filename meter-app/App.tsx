@@ -134,7 +134,6 @@ export default function App() {
   const profileStatus = useSelector((state: RootState) => state.auth.profileStatus);
   const profileError = useSelector((state: RootState) => state.auth.profileError);
   const [screen, setScreen] = useState<ScreenName>('splash');
-  const [webMenuOpen, setWebMenuOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [language, setLanguage] = useState<Language>('en');
   const [meterReaderId, setMeterReaderId] = useState('');
@@ -170,7 +169,6 @@ export default function App() {
   const [wardFilter, setWardFilter] = useState('all');
   const [draftBillApprovalFilter, setDraftBillApprovalFilter] = useState<BillApprovalFilter>('all');
   const [billApprovalFilter, setBillApprovalFilter] = useState<BillApprovalFilter>('all');
-  const [serviceMenuOpen, setServiceMenuOpen] = useState(false);
   const [problemMenuOpen, setProblemMenuOpen] = useState(false);
   const [serviceProblem, setServiceProblem] = useState(SERVICE_PROBLEMS[0]);
   const [serviceDescription, setServiceDescription] = useState('');
@@ -181,6 +179,10 @@ export default function App() {
   const [readingConfirmed, setReadingConfirmed] = useState(false);
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const cameraRef = useRef<CameraView>(null);
+  const screenHistoryRef = useRef<ScreenName[]>([]);
+  const previousScreenRef = useRef(screen);
+  const isGoingBackRef = useRef(false);
+  const isNavigatingToRootRef = useRef(false);
   const [cameraReady, setCameraReady] = useState(false);
   const [cameraAvailable, setCameraAvailable] = useState<boolean | null>(Platform.OS === 'web' ? null : true);
   const [cameraPhoto, setCameraPhoto] = useState<CameraCapturedPicture | null>(null);
@@ -224,6 +226,27 @@ export default function App() {
   const newReadingLookupSequence = useRef(0);
   const isCompactWeb = isWeb && viewportWidth <= 640;
   const isShortScreen = viewportHeight <= 700;
+
+  useEffect(() => {
+    if (screen === previousScreenRef.current) return;
+    if (isGoingBackRef.current) {
+      isGoingBackRef.current = false;
+      previousScreenRef.current = screen;
+      return;
+    }
+    if (isNavigatingToRootRef.current) {
+      isNavigatingToRootRef.current = false;
+      screenHistoryRef.current = [];
+      previousScreenRef.current = screen;
+      return;
+    }
+    if (screen === 'splash' || screen === 'signin') {
+      screenHistoryRef.current = [];
+    } else if (previousScreenRef.current !== 'splash' && previousScreenRef.current !== 'signin') {
+      screenHistoryRef.current = [...screenHistoryRef.current.slice(-19), previousScreenRef.current];
+    }
+    previousScreenRef.current = screen;
+  }, [screen]);
 
   const [fontsLoaded] = useFonts({
     'Open Sans': OpenSans_400Regular,
@@ -1111,11 +1134,64 @@ export default function App() {
     setScreen('profile');
   };
 
+  const goBack = () => {
+    setDrawerOpen(false);
+    const previousScreen = screenHistoryRef.current.pop();
+    if (previousScreen) {
+      isGoingBackRef.current = true;
+      setScreen(previousScreen);
+      return;
+    }
+    const fallbackScreens: Partial<Record<ScreenName, ScreenName>> = {
+      profile: 'list',
+      completed: 'list',
+      detail: 'list',
+      enter: 'detail',
+      review: 'enter',
+      saved: 'review',
+      newReading: 'list',
+      srnew: 'sr',
+      srdone: 'sr',
+      sr: 'list',
+      camera: cameraTarget === 'service' ? 'srnew' : cameraTarget === 'newReading' ? 'newReading' : 'detail',
+    };
+    const fallback = fallbackScreens[screen];
+    if (fallback) {
+      isGoingBackRef.current = true;
+      setScreen(fallback);
+    }
+  };
+
+  const renderPageHeaderControls = () => (
+    <View style={[styles.pageHeaderControls, isWeb && styles.pageHeaderControlsWeb]}>
+      <Pressable
+        accessibilityLabel={translations.moreOptions}
+        accessibilityRole="button"
+        onPress={() => setDrawerOpen(true)}
+        style={[styles.pageHeaderButton, isWeb && styles.pageHeaderButtonWeb]}
+      >
+        <Text style={[styles.pageHeaderButtonText, isWeb && styles.pageHeaderButtonTextWeb]}>☰</Text>
+      </Pressable>
+    </View>
+  );
+
+  const renderPageBackButton = () => (
+    screen === 'list' ? null : (
+      <Pressable
+        accessibilityLabel={translations.back}
+        accessibilityRole="button"
+        onPress={goBack}
+        style={[styles.pageHeaderButton, isWeb && styles.pageHeaderButtonWeb]}
+      >
+        <Text style={[styles.pageHeaderButtonText, isWeb && styles.pageHeaderButtonTextWeb]}>←</Text>
+      </Pressable>
+    )
+  );
+
   const logOut = async () => {
     try {
       await clearStoredTokens();
       dispatch(clearAuthenticatedUser());
-      setWebMenuOpen(false);
       setDrawerOpen(false);
       setSignInMessage('');
       setAdminSignInMode(false);
@@ -1154,6 +1230,40 @@ export default function App() {
             <Text style={styles.accountDrawerCloseText}>×</Text>
           </Pressable>
         </View>
+        <Text style={styles.accountDrawerSection}>{translations.workspace}</Text>
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => {
+            setDrawerOpen(false);
+            if (screen === 'list') {
+              screenHistoryRef.current = [];
+            } else {
+              isNavigatingToRootRef.current = true;
+            }
+            setScreen('list');
+          }}
+          style={styles.accountMenuItem}
+        >
+          <Text style={styles.accountMenuIcon}>◉</Text>
+          <Text style={styles.accountMenuText}>{translations.meterReading}</Text>
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => {
+            setDrawerOpen(false);
+            if (screen === 'sr') {
+              screenHistoryRef.current = [];
+            } else {
+              isNavigatingToRootRef.current = true;
+            }
+            setScreen('sr');
+          }}
+          style={styles.accountMenuItem}
+        >
+          <Text style={styles.accountMenuIcon}>▤</Text>
+          <Text style={styles.accountMenuText}>{translations.serviceRequest}</Text>
+        </Pressable>
+        <View style={styles.accountMenuDivider} />
         <Pressable onPress={openProfile} style={styles.accountMenuItem}>
           <Text style={styles.accountMenuIcon}>◉</Text>
           <Text style={styles.accountMenuText}>{translations.profile}</Text>
@@ -1228,13 +1338,14 @@ export default function App() {
     if (isWeb) {
       return (
         <View style={styles.webDashboard}>
-          {renderWebSidebar()}
           <View style={styles.webMain}>
             <View style={[styles.webTopBar, isCompactWeb && styles.webTopBarCompact]}>
+              {renderPageHeaderControls()}
               <View>
                 <Text style={styles.webBreadcrumb}>ACCOUNT</Text>
                 <Text style={styles.webPageTitle}>Profile</Text>
               </View>
+              {renderPageBackButton()}
             </View>
             <ScrollView style={styles.profileScroll} contentContainerStyle={[styles.profilePageContent, styles.webPageFooterSpace]}>
               {profileContent}
@@ -1248,10 +1359,9 @@ export default function App() {
     return (
       <View style={styles.screenShellDark}>
         <View style={styles.topBar}>
-          <Pressable onPress={() => setScreen('list')} style={styles.iconButton}>
-            <Text style={styles.iconButtonText}>←</Text>
-          </Pressable>
+          {renderPageHeaderControls()}
           <Text style={[styles.heading, styles.topBarTitle]}>Profile</Text>
+          {renderPageBackButton()}
         </View>
         <ScrollView style={styles.profileScroll} contentContainerStyle={styles.profilePageContent}>
           {profileContent}
@@ -1263,16 +1373,9 @@ export default function App() {
   const renderList = () => (
     <View style={styles.screenShellDark}>
       <View style={styles.topBar}>
-        <Pressable
-          onPress={() => {
-            setDrawerOpen(true);
-          }}
-          accessibilityLabel="Open side menu"
-          style={styles.iconButton}
-        >
-          <Text style={styles.iconButtonText}>☰</Text>
-        </Pressable>
+        {renderPageHeaderControls()}
         <Text style={[styles.heading, styles.topBarTitle]}>{translations.meterReading}</Text>
+        {renderPageBackButton()}
         <View style={styles.topBarIcons}>
           <Text style={styles.iconText}>⌕</Text>
           <Text style={styles.iconText}>🔔︎</Text>
@@ -1623,10 +1726,9 @@ export default function App() {
   const renderServiceRequestList = () => (
     <View style={styles.screenShellDark}>
       <View style={styles.topBar}>
-        <Pressable onPress={() => setScreen('list')} style={styles.iconButton}>
-          <Text style={styles.iconButtonText}>←</Text>
-        </Pressable>
+        {renderPageHeaderControls()}
         <Text style={[styles.heading, styles.topBarTitle]}>{translations.serviceRequest}</Text>
+        {renderPageBackButton()}
       </View>
       {renderServiceRequestFilterModal()}
       <View style={styles.fieldBlock}>
@@ -1680,10 +1782,9 @@ export default function App() {
   const renderCreateServiceRequest = () => (
     <View style={styles.screenShellDark}>
       <View style={styles.topBar}>
-        <Pressable onPress={() => setScreen('sr')} style={styles.iconButton}>
-          <Text style={styles.iconButtonText}>←</Text>
-        </Pressable>
+        {renderPageHeaderControls()}
         <Text style={[styles.heading, styles.topBarTitle]}>{translations.createServiceRequest}</Text>
+        {renderPageBackButton()}
       </View>
       <ScrollView style={styles.serviceFormScroll} contentContainerStyle={styles.serviceFormContent}>
         <View style={styles.fieldBlock}>
@@ -1796,6 +1897,11 @@ export default function App() {
 
   const renderServiceRequestSubmitted = () => (
     <View style={styles.screenShellDark}>
+      <View style={styles.topBar}>
+        {renderPageHeaderControls()}
+        <Text style={[styles.heading, styles.topBarTitle]}>{translations.serviceRequestSubmitted}</Text>
+        {renderPageBackButton()}
+      </View>
       <View style={styles.serviceSubmittedContent}>
         <View style={styles.serviceSuccessIcon}><Text style={styles.serviceSuccessCheck}>✓</Text></View>
         <Text style={[styles.heading, styles.serviceSuccessTitle]}>{translations.serviceRequestSubmitted}</Text>
@@ -1819,102 +1925,18 @@ export default function App() {
     </View>
   );
 
-  const renderWebSidebar = () => null;
-
-  const renderWebMenu = () => (
-    <>
-      {webMenuOpen ? (
-        <View style={styles.webMenuLayer}>
-          <Pressable
-            accessibilityLabel="Close workspace and account menu"
-            onPress={() => setWebMenuOpen(false)}
-            style={styles.webMenuBackdrop}
-          />
-          <View style={[styles.webMenuPopover, isCompactWeb && styles.webMenuPopoverCompact]}>
-            <View style={styles.webAccountIdentity}>
-              <View style={styles.webAccountAvatar}><Text style={styles.webAccountAvatarText}>{authAvatarInitial}</Text></View>
-              <View style={styles.webAccountIdentityText}>
-                <Text numberOfLines={1} style={styles.webAccountName}>{authDisplayName}</Text>
-                <Text numberOfLines={1} style={styles.webAccountMeta}>{authAccountMeta}</Text>
-              </View>
-            </View>
-            <View style={styles.webMenuDivider} />
-            <Text style={styles.webMenuSectionLabel}>{translations.workspace}</Text>
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => {
-                setWebMenuOpen(false);
-                setScreen('list');
-              }}
-              style={styles.webMenuItem}
-            >
-              <Text style={styles.webMenuItemIcon}>◉</Text>
-              <Text style={styles.webMenuItemText}>{translations.meterReading}</Text>
-            </Pressable>
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => {
-                setWebMenuOpen(false);
-                setServiceMenuOpen(true);
-                setScreen('sr');
-              }}
-              style={styles.webMenuItem}
-            >
-              <Text style={styles.webMenuItemIcon}>▤</Text>
-              <Text style={styles.webMenuItemText}>{translations.serviceRequest}</Text>
-            </Pressable>
-            <View style={styles.webMenuDivider} />
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => {
-                setWebMenuOpen(false);
-                setScreen('profile');
-              }}
-              style={styles.webMenuItem}
-            >
-              <Text style={styles.webMenuItemIcon}>◉</Text>
-              <Text style={styles.webMenuItemText}>{translations.profile}</Text>
-            </Pressable>
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => setLanguage((current) => (current === 'en' ? 'bn' : 'en'))}
-              style={styles.webMenuItem}
-            >
-              <Text style={styles.webMenuItemIcon}>文</Text>
-              <Text style={styles.webMenuItemText}>{translations.language}</Text>
-              <Text style={styles.webAccountLanguage}>{language === 'en' ? 'বাংলা' : 'English'}</Text>
-            </Pressable>
-            <View style={styles.webMenuDivider} />
-            <Pressable accessibilityRole="button" onPress={logOut} style={styles.webMenuItem}>
-              <Text style={styles.webMenuItemIcon}>↪</Text>
-              <Text style={styles.webMenuLogout}>{translations.logOut}</Text>
-            </Pressable>
-          </View>
-        </View>
-      ) : null}
-      <View style={styles.webMenuTriggerHost}>
-        <Pressable
-          accessibilityLabel="Open workspace and account menu"
-          accessibilityRole="button"
-          accessibilityState={{ expanded: webMenuOpen }}
-          onPress={() => setWebMenuOpen((open) => !open)}
-          style={styles.webMenuTrigger}
-        >
-          <Text style={styles.webMenuTriggerText}>⋮</Text>
-        </Pressable>
-      </View>
-    </>
-  );
-
   const renderWebList = () => (
     <View style={styles.webDashboard}>
-      {renderWebSidebar()}
       <View style={styles.webMain}>
         <View style={[styles.webTopBar, isCompactWeb && styles.webTopBarCompact]}>
+          {renderPageHeaderControls()}
           <View>
-            <Text style={styles.webBreadcrumb}></Text>
+            <View>
+              <Text style={styles.webBreadcrumb}>{translations.workspace}</Text>
+            </View>
             <Text style={styles.webPageTitle}>{translations.meterReading}</Text>
           </View>
+          {renderPageBackButton()}
         </View>
 
         <ScrollView
@@ -2184,15 +2206,13 @@ export default function App() {
   const renderCompletedReadings = () => (
     isWeb ? (
       <View style={styles.webDashboard}>
-        {renderWebSidebar()}
         <View style={styles.webMain}>
           <View style={[styles.webTopBar, isCompactWeb && styles.webTopBarCompact]}>
+            {renderPageHeaderControls()}
             <View>
               <Text style={styles.webPageTitle}>{translations.completedReadings}</Text>
             </View>
-            <Pressable onPress={() => setScreen('list')} style={styles.webBackButton}>
-              <Text style={styles.webBackButtonText}>←  {translations.meterReading}</Text>
-            </Pressable>
+            {renderPageBackButton()}
           </View>
           <ScrollView style={styles.webContent} contentContainerStyle={[styles.webContentInner, styles.webPageFooterSpace, isCompactWeb && styles.webContentInnerCompact]}>
             <View style={styles.completedReadingsSummary}>
@@ -2259,10 +2279,9 @@ export default function App() {
     ) : (
       <View style={styles.screenShellDark}>
         <View style={styles.topBar}>
-          <Pressable onPress={() => setScreen('list')} style={styles.iconButton}>
-            <Text style={styles.iconButtonText}>←</Text>
-          </Pressable>
+          {renderPageHeaderControls()}
           <Text style={[styles.heading, styles.topBarTitle]}>{translations.completedReadings}</Text>
+          {renderPageBackButton()}
         </View>
         <View style={styles.completedReadingsSummary}>
           <View>
@@ -2329,12 +2348,13 @@ export default function App() {
 
   const renderWebServiceRequests = () => (
     <View style={styles.webDashboard}>
-      {renderWebSidebar()}
       <View style={styles.webMain}>
         <View style={[styles.webTopBar, isCompactWeb && styles.webTopBarCompact]}>
+          {renderPageHeaderControls()}
           <View>
             <Text style={styles.webPageTitle}>{translations.serviceRequest}</Text>
           </View>
+          {renderPageBackButton()}
           <Pressable onPress={openCreateServiceRequest} style={styles.webPrimaryButton}>
             <Text style={styles.webPrimaryButtonText}>＋  {translations.createServiceRequest}</Text>
           </Pressable>
@@ -2405,15 +2425,13 @@ export default function App() {
 
   const renderWebCreateServiceRequest = () => (
     <View style={styles.webDashboard}>
-      {renderWebSidebar()}
       <View style={styles.webMain}>
         <View style={[styles.webTopBar, isCompactWeb && styles.webTopBarCompact]}>
+          {renderPageHeaderControls()}
           <View>
             <Text style={styles.webPageTitle}>{translations.createServiceRequest}</Text>
           </View>
-          <Pressable onPress={() => setScreen('sr')} style={styles.webBackButton}>
-            <Text style={styles.webBackButtonText}>←  {translations.backToServiceRequests}</Text>
-          </Pressable>
+          {renderPageBackButton()}
         </View>
         <ScrollView
           style={styles.webContent}
@@ -2531,12 +2549,13 @@ export default function App() {
 
   const renderWebServiceRequestSubmitted = () => (
     <View style={styles.webDashboard}>
-      {renderWebSidebar()}
       <View style={styles.webMain}>
         <View style={[styles.webTopBar, isCompactWeb && styles.webTopBarCompact]}>
+          {renderPageHeaderControls()}
           <View>
             <Text style={styles.webPageTitle}>{translations.serviceRequestSubmitted}</Text>
           </View>
+          {renderPageBackButton()}
         </View>
         <View style={styles.webSuccessPage}>
           <View style={styles.serviceSuccessIcon}><Text style={styles.serviceSuccessCheck}>✓</Text></View>
@@ -2567,16 +2586,14 @@ export default function App() {
 
   const renderWebDetail = () => (
     <View style={styles.webDashboard}>
-      {renderWebSidebar()}
       <View style={styles.webMain}>
         <View style={[styles.webTopBar, isCompactWeb && styles.webTopBarCompact]}>
+          {renderPageHeaderControls()}
           <View>
             <Text style={styles.webBreadcrumb}>WORKSPACE  /  CUSTOMER</Text>
             <Text style={styles.webPageTitle}>{translations.customerDetails}</Text>
           </View>
-          <Pressable onPress={() => setScreen('list')} style={styles.webBackButton}>
-            <Text style={styles.webBackButtonText}>←  Back to readings</Text>
-          </Pressable>
+          {renderPageBackButton()}
         </View>
         <ScrollView
           style={styles.webContent}
@@ -2672,10 +2689,9 @@ export default function App() {
   const renderDetail = () => (
     <View style={styles.screenShellDark}>
       <View style={styles.topBar}>
-        <Pressable onPress={() => setScreen('list')} style={styles.iconButton}>
-          <Text style={styles.iconButtonText}>←</Text>
-        </Pressable>
+        {renderPageHeaderControls()}
         <Text style={[styles.heading, styles.topBarTitle]}>{translations.customerDetails}</Text>
+        {renderPageBackButton()}
       </View>
 
       <View style={styles.tabRowDetail}>
@@ -2778,6 +2794,8 @@ export default function App() {
         contentContainerStyle={[styles.cameraScreen, styles.webPageFooterSpace]}
       >
         <View style={styles.cameraTopBar}>
+          {renderPageHeaderControls()}
+          {renderPageBackButton()}
           <Pressable onPress={() => setScreen(returnScreen)} style={styles.cameraCancelButton}>
             <Text style={styles.cameraCancelText}>×  Cancel</Text>
           </Pressable>
@@ -2971,15 +2989,13 @@ export default function App() {
   const renderReadingEntry = () => (
     isWeb ? (
       <View style={styles.webDashboard}>
-        {renderWebSidebar()}
         <View style={styles.webMain}>
           <View style={[styles.webTopBar, isCompactWeb && styles.webTopBarCompact]}>
+            {renderPageHeaderControls()}
             <View>
               <Text style={styles.webPageTitle}>{translations.currentReading}</Text>
             </View>
-            <Pressable onPress={() => setScreen('detail')} style={styles.webBackButton}>
-              <Text style={styles.webBackButtonText}>←  {translations.customerDetails}</Text>
-            </Pressable>
+            {renderPageBackButton()}
           </View>
           <ScrollView style={styles.webContent} contentContainerStyle={[styles.readingWorkflowContent, styles.webPageFooterSpace, isCompactWeb && styles.webContentInnerCompact]}>
             <View style={styles.readingCustomerBanner}>
@@ -3003,10 +3019,9 @@ export default function App() {
     ) : (
       <View style={styles.screenShellDark}>
         <View style={styles.topBar}>
-          <Pressable onPress={() => setScreen('camera')} style={styles.iconButton}>
-            <Text style={styles.iconButtonText}>←</Text>
-          </Pressable>
+          {renderPageHeaderControls()}
           <Text style={[styles.heading, styles.topBarTitle]}>{translations.currentReading}</Text>
+          {renderPageBackButton()}
         </View>
         <ScrollView style={styles.readingWorkflowScroll} contentContainerStyle={styles.readingWorkflowContent}>
           <View style={styles.readingCustomerBanner}>
@@ -3058,15 +3073,13 @@ export default function App() {
   const renderReadingReview = () => (
     isWeb ? (
       <View style={styles.webDashboard}>
-        {renderWebSidebar()}
         <View style={styles.webMain}>
           <View style={[styles.webTopBar, isCompactWeb && styles.webTopBarCompact]}>
-            <View>  
+            {renderPageHeaderControls()}
+            <View>
               <Text style={styles.webPageTitle}>{translations.reviewReading}</Text>
             </View>
-            <Pressable onPress={() => setScreen('enter')} style={styles.webBackButton}>
-              <Text style={styles.webBackButtonText}>←  {translations.currentReading}</Text>
-            </Pressable>
+            {renderPageBackButton()}
           </View>
           <ScrollView style={styles.webContent} contentContainerStyle={[styles.readingWorkflowContent, styles.webPageFooterSpace]}>
             {renderReviewContent()}
@@ -3082,10 +3095,9 @@ export default function App() {
     ) : (
       <View style={styles.screenShellDark}>
         <View style={styles.topBar}>
-          <Pressable onPress={() => setScreen('enter')} style={styles.iconButton}>
-            <Text style={styles.iconButtonText}>←</Text>
-          </Pressable>
+          {renderPageHeaderControls()}
           <Text style={[styles.heading, styles.topBarTitle]}>{translations.reviewReading}</Text>
+          {renderPageBackButton()}
         </View>
         <ScrollView style={styles.readingWorkflowScroll} contentContainerStyle={styles.readingWorkflowContent}>
           {renderReviewContent()}
@@ -3135,13 +3147,13 @@ export default function App() {
 
     return isWeb ? (
       <View style={styles.webDashboard}>
-        {renderWebSidebar()}
         <View style={styles.webMain}>
           <View style={[styles.webTopBar, isCompactWeb && styles.webTopBarCompact]}>
+            {renderPageHeaderControls()}
             <View>
-
               <Text style={styles.webPageTitle}>{translations.readingSaved}</Text>
             </View>
+            {renderPageBackButton()}
           </View>
           <ScrollView style={styles.webContent} contentContainerStyle={[styles.readingWorkflowContent, styles.webPageFooterSpace]}>
             {content}
@@ -3159,6 +3171,11 @@ export default function App() {
       </View>
     ) : (
       <View style={styles.screenShellDark}>
+        <View style={styles.topBar}>
+          {renderPageHeaderControls()}
+          <Text style={[styles.heading, styles.topBarTitle]}>{translations.readingSaved}</Text>
+          {renderPageBackButton()}
+        </View>
         <ScrollView style={styles.readingWorkflowScroll} contentContainerStyle={styles.readingSavedContent}>{content}</ScrollView>
         <View style={styles.readingSavedActions}>
           <Pressable onPress={goToNextCustomer} style={styles.primaryButton}>
@@ -3404,15 +3421,13 @@ export default function App() {
 
     return isWeb ? (
       <View style={styles.webDashboard}>
-        {renderWebSidebar()}
         <View style={styles.webMain}>
           <View style={[styles.webTopBar, isCompactWeb && styles.webTopBarCompact]}>
+            {renderPageHeaderControls()}
             <View>
               <Text style={styles.webPageTitle}>{translations.newReading}</Text>
             </View>
-            <Pressable onPress={() => setScreen('list')} style={styles.webBackButton}>
-              <Text style={styles.webBackButtonText}>←  {translations.meterReading}</Text>
-            </Pressable>
+            {renderPageBackButton()}
           </View>
           <ScrollView
             style={styles.webContent}
@@ -3426,10 +3441,9 @@ export default function App() {
     ) : (
       <View style={styles.screenShellDark}>
         <View style={styles.topBar}>
-          <Pressable onPress={() => setScreen('list')} style={styles.iconButton}>
-            <Text style={styles.iconButtonText}>←</Text>
-          </Pressable>
+          {renderPageHeaderControls()}
           <Text style={[styles.heading, styles.topBarTitle]}>{translations.newReading}</Text>
+          {renderPageBackButton()}
         </View>
         <ScrollView style={styles.readingWorkflowScroll} contentContainerStyle={styles.newReadingScrollContent}>
           {formContent}
@@ -3475,8 +3489,7 @@ export default function App() {
           {screen === 'srnew' && !isWeb ? renderCreateServiceRequest() : null}
           {screen === 'srdone' && isWeb ? renderWebServiceRequestSubmitted() : null}
           {screen === 'srdone' && !isWeb ? renderServiceRequestSubmitted() : null}
-          {isWeb && authUser ? renderWebMenu() : null}
-          {!isWeb && drawerOpen ? renderAccountDrawer() : null}
+          {drawerOpen ? renderAccountDrawer() : null}
         </View>
       </SafeAreaView>
     </SafeAreaProvider>
