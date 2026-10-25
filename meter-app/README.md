@@ -2,6 +2,23 @@
 
 Frontend-first Expo app for web, iOS, and Android. The web interface uses React Native Web; platform-specific camera access is provided by Expo Camera.
 
+## Frontend technology stack
+
+| Layer | Technology | Usage |
+| --- | --- | --- |
+| Language | TypeScript | Application code and type checking |
+| UI library | React | Component-based user interface |
+| Mobile framework | React Native | Shared native app interface |
+| Universal platform | Expo SDK | Runs and builds the app for web, iOS, and Android |
+| Web compatibility | React Native Web | Renders React Native components in the browser |
+| API client | Axios | Sends requests to the standalone backend |
+| State management | Redux Toolkit and React Redux | Manages shared authentication state |
+| Native authentication storage | Expo SecureStore | Stores tokens and signed-in user details on iOS and Android |
+| Browser authentication storage | `localStorage` with `sessionStorage` and in-memory fallbacks | Stores tokens and signed-in user details in the web app |
+| Camera and image handling | Expo Camera, Expo Image Picker, and Expo Image Manipulator | Captures or selects photos and prepares them for upload |
+| Device location | Expo Location | Requests device location for meter readings |
+| Web preview server | Docker and Nginx | Builds and serves the static web export |
+
 ## Run the web preview with Docker
 
 Install and start Docker Desktop, then run these commands from this project folder:
