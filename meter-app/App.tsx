@@ -1,14 +1,14 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { StatusBar } from 'expo-status-bar';
-import { CameraView, useCameraPermissions } from 'expo-camera';
-import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
-import * as ImagePicker from 'expo-image-picker';
-import * as Location from 'expo-location';
-import { useFonts } from 'expo-font';
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { StatusBar } from "expo-status-bar";
+import { CameraView, useCameraPermissions } from "expo-camera";
+import { ImageManipulator, SaveFormat } from "expo-image-manipulator";
+import * as ImagePicker from "expo-image-picker";
+import * as Location from "expo-location";
+import { useFonts } from "expo-font";
 import {
   OpenSans_400Regular,
   OpenSans_700Bold,
-} from '@expo-google-fonts/open-sans';
+} from "@expo-google-fonts/open-sans";
 import {
   ApiConnectionError,
   ApiRequestError,
@@ -23,21 +23,22 @@ import {
   loginAdmin,
   loginMeterReader,
   TokenStorageError,
+  type MeterReaderBill,
+  type MeterReaderReading,
   type ReadingCustomer,
-  type MeterReadingSubmission,
   type ServiceRequestCustomer,
   type ServiceRequestRecord,
   type ServiceRequestStatus,
-} from './api';
-import AdminPanel from './AdminPanel';
+} from "./api";
+import AdminPanel from "./AdminPanel";
 import {
   clearAuthenticatedUser,
   fetchCurrentUser,
   restoreSession,
   setAuthenticatedUser,
-} from './authSlice';
-import type { AppDispatch, RootState } from './store';
-import { useDispatch, useSelector } from 'react-redux';
+} from "./authSlice";
+import type { AppDispatch, RootState } from "./store";
+import { useDispatch, useSelector } from "react-redux";
 import {
   Alert,
   Image,
@@ -49,22 +50,48 @@ import {
   TextInput,
   View,
   useWindowDimensions,
-} from 'react-native';
-import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
-import type { CameraCapturedPicture } from 'expo-camera';
-import { LANG, Language } from './translations';
-import { styles } from './styles';
+} from "react-native";
+import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
+import type { CameraCapturedPicture } from "expo-camera";
+import { LANG, Language } from "./translations";
+import { styles } from "./styles";
 
-type ScreenName = 'splash' | 'signin' | 'admin' | 'list' | 'completed' | 'detail' | 'camera' | 'enter' | 'review' | 'saved' | 'profile' | 'sr' | 'srnew' | 'srdone' | 'newReading';
-type DetailTab = 'bill' | 'history';
-type BillApprovalFilter = 'all' | 'approved' | 'approvalRequired';
+type ScreenName =
+  | "splash"
+  | "signin"
+  | "admin"
+  | "list"
+  | "completed"
+  | "detail"
+  | "camera"
+  | "enter"
+  | "review"
+  | "saved"
+  | "profile"
+  | "sr"
+  | "srnew"
+  | "srdone"
+  | "newReading";
+type DetailTab = "bill" | "history";
+type BillApprovalFilter = "all" | "approved" | "approvalRequired";
 type CompletedReading = {
   id: string;
   customer: string;
   account: string;
   wardNo: string | null;
   meter: string;
-  current: string;
+  billNo: string;
+  previousReading: string;
+  currentReading: string;
+  consumption: string;
+  tariffRate: string;
+  baseCharge: string;
+  additionalCharge: string;
+  vatRate: string;
+  vatAmount: string;
+  totalAmount: string;
+  billingPeriod: string;
+  dueDate: string | null;
   date: string;
 };
 
@@ -89,93 +116,155 @@ type CustomerRecord = {
   previousReadingDate?: string;
   nearbyDistance?: string;
   flag?: boolean;
-  status: 'blocked' | 'normal' | 'high-use' | 'zero-use';
+  status: "blocked" | "normal" | "high-use" | "zero-use";
 };
 
-function toSubmittedReadingCustomer(record: MeterReadingSubmission): CustomerRecord {
-  const bill = Number(record.currentBill);
+function toSubmittedReadingCustomer(record: MeterReaderReading): CustomerRecord {
+  const currentReading = Number(record.currentReading);
   return {
     id: record.id,
-    name: record.customerName,
-    addr: `${record.readerCode} · ${new Date(record.createdAt).toLocaleString()}`,
-    acc: record.accountNo,
-    wardNo: record.wardNo,
-    meter: record.meterNo || '—',
-    amt: `৳${bill.toLocaleString('en-US', { minimumFractionDigits: 2 })}`,
-    dueLabel: 'Submitted',
-    color: '#B7791F',
+    name: record.meterNo ? `Meter ${record.meterNo}` : record.customerId,
+    addr:
+      record.addressSnapshot || new Date(record.readingDate).toLocaleString(),
+    acc: record.customerId,
+    wardNo: null,
+    meter: record.meterNo || "—",
+    amt: `${currentReading.toLocaleString("en-US", { minimumFractionDigits: 2 })} m³`,
+    dueLabel: "Submitted",
+    color: "#006BD9",
     detailAddress: undefined,
-    status: 'normal',
+    previousReading: String(record.previousReading),
+    previousReadingDate: record.readingDate,
+    status: "normal",
   };
 }
 
-function toCompletedReading(record: MeterReadingSubmission): CompletedReading {
+function formatTaka(value: string): string {
+  const amount = Number(value);
+  return Number.isFinite(amount)
+    ? `৳${amount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+    : "—";
+}
+
+function toCompletedReading(record: MeterReaderBill): CompletedReading {
   return {
     id: record.id,
-    customer: record.customerName,
+    customer: record.accountHolderName,
     account: record.accountNo,
-    wardNo: record.wardNo,
-    meter: record.meterNo || '—',
-    current: `৳${Number(record.currentBill).toLocaleString('en-US', { minimumFractionDigits: 2 })}`,
-    date: new Date(record.createdAt).toLocaleString(),
+    wardNo: record.accountWardNo ?? null,
+    meter: record.meterNo || "—",
+    billNo: record.billNo,
+    previousReading: String(record.previousMeterReadingValue),
+    currentReading: String(record.currentMeterReadingValue),
+    consumption: String(record.consumptionM3),
+    tariffRate: String(record.tariffRatePerM3),
+    baseCharge: String(record.baseWaterCharge),
+    additionalCharge: String(record.additionalWaterCharge),
+    vatRate: String(record.vatRatePercentage),
+    vatAmount: String(record.vatAmount),
+    totalAmount: String(record.totalAmountDue),
+    billingPeriod: `${record.billingMonth}/${record.billingYear}`,
+    dueDate: record.dueDate,
+    date: new Date(record.issueDate ?? record.createdAt).toLocaleDateString(),
   };
 }
 
-const SERVICE_PROBLEMS = ['Meter defective', 'Meter stopped', 'Glass broken', 'Other'];
-const SERVICE_REQUEST_FILTERS = ['all', 'Pending', 'In progress', 'Completed'] as const;
-const NO_WARD_FILTER = '__no_ward__';
+const SERVICE_PROBLEMS = [
+  "Meter defective",
+  "Meter stopped",
+  "Glass broken",
+  "Other",
+];
+const SERVICE_REQUEST_FILTERS = [
+  "all",
+  "Pending",
+  "In progress",
+  "Completed",
+] as const;
+const NO_WARD_FILTER = "__no_ward__";
 
-const isWeb = Platform.OS === 'web';
+function getCurrentBillingPeriod(): {
+  billingMonth: string;
+  billingYear: string;
+} {
+  const now = new Date();
+  return {
+    billingMonth: String(now.getMonth() + 1),
+    billingYear: String(now.getFullYear()),
+  };
+}
+
+const isWeb = Platform.OS === "web";
 
 export default function App() {
-  const { width: viewportWidth, height: viewportHeight } = useWindowDimensions();
+  const { width: viewportWidth, height: viewportHeight } =
+    useWindowDimensions();
   const dispatch = useDispatch<AppDispatch>();
   const authUser = useSelector((state: RootState) => state.auth.user);
-  const profileStatus = useSelector((state: RootState) => state.auth.profileStatus);
-  const profileError = useSelector((state: RootState) => state.auth.profileError);
-  const [screen, setScreen] = useState<ScreenName>('splash');
+  const profileStatus = useSelector(
+    (state: RootState) => state.auth.profileStatus,
+  );
+  const profileError = useSelector(
+    (state: RootState) => state.auth.profileError,
+  );
+  const [screen, setScreen] = useState<ScreenName>("splash");
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [language, setLanguage] = useState<Language>('en');
-  const [meterReaderId, setMeterReaderId] = useState('');
+  const [language, setLanguage] = useState<Language>("en");
+  const [meterReaderId, setMeterReaderId] = useState("");
   const [adminSignInMode, setAdminSignInMode] = useState(false);
-  const [signInPassword, setSignInPassword] = useState('');
+  const [signInPassword, setSignInPassword] = useState("");
   const [signInPasswordVisible, setSignInPasswordVisible] = useState(false);
-  const [signInMessage, setSignInMessage] = useState('');
+  const [signInMessage, setSignInMessage] = useState("");
   const [signInLoading, setSignInLoading] = useState(false);
-  const [detailTab, setDetailTab] = useState<DetailTab>('bill');
+  const [detailTab, setDetailTab] = useState<DetailTab>("bill");
   const [selectedCustomer, setSelectedCustomer] = useState<CustomerRecord>({
-    id: '',
-    name: '',
-    addr: '',
-    acc: '',
-    meter: '',
-    amt: '',
-    dueLabel: '',
-    color: '#B7791F',
-    status: 'normal',
+    id: "",
+    name: "",
+    addr: "",
+    acc: "",
+    meter: "",
+    amt: "",
+    dueLabel: "",
+    color: "#B7791F",
+    status: "normal",
   });
-  const [assignedCustomers, setAssignedCustomers] = useState<CustomerRecord[]>([]);
-  const [assignedCustomersLoading, setAssignedCustomersLoading] = useState(false);
-  const [assignedCustomersError, setAssignedCustomersError] = useState('');
-  const [assignedCustomersRefreshKey, setAssignedCustomersRefreshKey] = useState(0);
-  const [completedReadings, setCompletedReadings] = useState<CompletedReading[]>([]);
-  const [completedReadingsLoading, setCompletedReadingsLoading] = useState(false);
-  const [completedReadingsError, setCompletedReadingsError] = useState('');
-  const [readingDashboardTab, setReadingDashboardTab] = useState<'pending' | 'completed'>('pending');
-  const [searchText, setSearchText] = useState('');
+  const [assignedCustomers, setAssignedCustomers] = useState<CustomerRecord[]>(
+    [],
+  );
+  const [assignedCustomersLoading, setAssignedCustomersLoading] =
+    useState(false);
+  const [assignedCustomersError, setAssignedCustomersError] = useState("");
+  const [assignedCustomersRefreshKey, setAssignedCustomersRefreshKey] =
+    useState(0);
+  const hasLoadedPendingReadingsRef = useRef(false);
+  const [completedReadings, setCompletedReadings] = useState<
+    CompletedReading[]
+  >([]);
+  const [completedReadingsLoading, setCompletedReadingsLoading] =
+    useState(false);
+  const [completedReadingsError, setCompletedReadingsError] = useState("");
+  const hasLoadedCompletedReadingsRef = useRef(false);
+  const [readingDashboardTab, setReadingDashboardTab] = useState<
+    "pending" | "completed"
+  >("pending");
+  const [searchText, setSearchText] = useState("");
   const [readingFilterOpen, setReadingFilterOpen] = useState(false);
   const [wardOptionOpen, setWardOptionOpen] = useState(false);
-  const [draftWardFilter, setDraftWardFilter] = useState('all');
-  const [wardFilter, setWardFilter] = useState('all');
-  const [draftBillApprovalFilter, setDraftBillApprovalFilter] = useState<BillApprovalFilter>('all');
-  const [billApprovalFilter, setBillApprovalFilter] = useState<BillApprovalFilter>('all');
+  const [draftWardFilter, setDraftWardFilter] = useState("all");
+  const [wardFilter, setWardFilter] = useState("all");
+  const [draftBillApprovalFilter, setDraftBillApprovalFilter] =
+    useState<BillApprovalFilter>("all");
+  const [billApprovalFilter, setBillApprovalFilter] =
+    useState<BillApprovalFilter>("all");
   const [problemMenuOpen, setProblemMenuOpen] = useState(false);
   const [serviceProblem, setServiceProblem] = useState(SERVICE_PROBLEMS[0]);
-  const [serviceDescription, setServiceDescription] = useState('');
-  const [serviceAccount, setServiceAccount] = useState('');
-  const [reading, setReading] = useState('4377.00');
-  const [readingRemarks, setReadingRemarks] = useState('');
-  const [meterCondition, setMeterCondition] = useState<'normal' | 'damaged' | 'stopped'>('normal');
+  const [serviceDescription, setServiceDescription] = useState("");
+  const [serviceAccount, setServiceAccount] = useState("");
+  const [reading, setReading] = useState("4377.00");
+  const [readingRemarks, setReadingRemarks] = useState("");
+  const [meterCondition, setMeterCondition] = useState<
+    "normal" | "damaged" | "stopped"
+  >("normal");
   const [readingConfirmed, setReadingConfirmed] = useState(false);
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const cameraRef = useRef<CameraView>(null);
@@ -184,45 +273,66 @@ export default function App() {
   const isGoingBackRef = useRef(false);
   const isNavigatingToRootRef = useRef(false);
   const [cameraReady, setCameraReady] = useState(false);
-  const [cameraAvailable, setCameraAvailable] = useState<boolean | null>(Platform.OS === 'web' ? null : true);
-  const [cameraPhoto, setCameraPhoto] = useState<CameraCapturedPicture | null>(null);
-  const [cameraError, setCameraError] = useState('');
-  const [cameraFacing, setCameraFacing] = useState<'back' | 'front'>('back');
-  const [cameraTarget, setCameraTarget] = useState<'reading' | 'newReading' | 'service'>('reading');
-  const [servicePhoto, setServicePhoto] = useState<CameraCapturedPicture | null>(null);
-  const [serviceCustomer, setServiceCustomer] = useState<ServiceRequestCustomer | null>(null);
+  const [cameraAvailable, setCameraAvailable] = useState<boolean | null>(
+    Platform.OS === "web" ? null : true,
+  );
+  const [cameraPhoto, setCameraPhoto] = useState<CameraCapturedPicture | null>(
+    null,
+  );
+  const [cameraError, setCameraError] = useState("");
+  const [cameraFacing, setCameraFacing] = useState<"back" | "front">("back");
+  const [cameraTarget, setCameraTarget] = useState<
+    "reading" | "newReading" | "service"
+  >("reading");
+  const [servicePhoto, setServicePhoto] =
+    useState<CameraCapturedPicture | null>(null);
+  const [serviceCustomer, setServiceCustomer] =
+    useState<ServiceRequestCustomer | null>(null);
   const [serviceCustomerLoading, setServiceCustomerLoading] = useState(false);
-  const [serviceCustomerError, setServiceCustomerError] = useState('');
-  const [serviceRequests, setServiceRequests] = useState<ServiceRequestRecord[]>([]);
+  const [serviceCustomerError, setServiceCustomerError] = useState("");
+  const [serviceRequests, setServiceRequests] = useState<
+    ServiceRequestRecord[]
+  >([]);
   const [serviceRequestsLoading, setServiceRequestsLoading] = useState(false);
-  const [serviceRequestsError, setServiceRequestsError] = useState('');
+  const [serviceRequestsError, setServiceRequestsError] = useState("");
   const [serviceRequestsRefreshKey, setServiceRequestsRefreshKey] = useState(0);
-  const [serviceRequestFilter, setServiceRequestFilter] = useState<'all' | ServiceRequestStatus>('all');
-  const [draftServiceRequestFilter, setDraftServiceRequestFilter] = useState<'all' | ServiceRequestStatus>('all');
-  const [serviceRequestFilterOpen, setServiceRequestFilterOpen] = useState(false);
-  const [serviceRequestSubmitting, setServiceRequestSubmitting] = useState(false);
-  const [serviceRequestError, setServiceRequestError] = useState('');
-  const [createdServiceRequest, setCreatedServiceRequest] = useState<ServiceRequestRecord | null>(null);
-  const [newReadingForm, setNewReadingForm] = useState({
-    meterOrAccount: '',
-    customerName: '',
-    mod: '',
-    previousBill: '',
-    currentBill: '',
-    latitude: '',
-    longitude: '',
-  });
-  const [newReadingCustomer, setNewReadingCustomer] = useState<ReadingCustomer | null>(null);
-  const [newReadingLookupError, setNewReadingLookupError] = useState('');
+  const [serviceRequestFilter, setServiceRequestFilter] = useState<
+    "all" | ServiceRequestStatus
+  >("all");
+  const [draftServiceRequestFilter, setDraftServiceRequestFilter] = useState<
+    "all" | ServiceRequestStatus
+  >("all");
+  const [serviceRequestFilterOpen, setServiceRequestFilterOpen] =
+    useState(false);
+  const [serviceRequestSubmitting, setServiceRequestSubmitting] =
+    useState(false);
+  const [serviceRequestError, setServiceRequestError] = useState("");
+  const [createdServiceRequest, setCreatedServiceRequest] =
+    useState<ServiceRequestRecord | null>(null);
+  const [newReadingForm, setNewReadingForm] = useState(() => ({
+    meterOrAccount: "",
+    customerName: "",
+    mod: "",
+    previousBill: "",
+    currentBill: "",
+    latitude: "",
+    longitude: "",
+    ...getCurrentBillingPeriod(),
+  }));
+  const [newReadingCustomer, setNewReadingCustomer] =
+    useState<ReadingCustomer | null>(null);
+  const [newReadingLookupError, setNewReadingLookupError] = useState("");
   const [newReadingAutoFetching, setNewReadingAutoFetching] = useState(false);
-  const [newReadingPhoto, setNewReadingPhoto] = useState<CameraCapturedPicture | null>(null);
-  const [newReadingLocationLoading, setNewReadingLocationLoading] = useState(false);
-  const [newReadingLocationSuccess, setNewReadingLocationSuccess] = useState(false);
-  const [newReadingLocationError, setNewReadingLocationError] = useState('');
+  const [newReadingPhoto, setNewReadingPhoto] =
+    useState<CameraCapturedPicture | null>(null);
+  const [newReadingLocationLoading, setNewReadingLocationLoading] =
+    useState(false);
+  const [newReadingLocationSuccess, setNewReadingLocationSuccess] =
+    useState(false);
+  const [newReadingLocationError, setNewReadingLocationError] = useState("");
   const [newReadingSaving, setNewReadingSaving] = useState(false);
-  const [newReadingErrorMsg, setNewReadingErrorMsg] = useState('');
-  const [newReadingSuccessMsg, setNewReadingSuccessMsg] = useState('');
-  const newReadingLookupTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [newReadingErrorMsg, setNewReadingErrorMsg] = useState("");
+  const [newReadingSuccessMsg, setNewReadingSuccessMsg] = useState("");
   const newReadingLookupSequence = useRef(0);
   const isCompactWeb = isWeb && viewportWidth <= 640;
   const isShortScreen = viewportHeight <= 700;
@@ -240,24 +350,35 @@ export default function App() {
       previousScreenRef.current = screen;
       return;
     }
-    if (screen === 'splash' || screen === 'signin') {
+    if (screen === "splash" || screen === "signin") {
       screenHistoryRef.current = [];
-    } else if (previousScreenRef.current !== 'splash' && previousScreenRef.current !== 'signin') {
-      screenHistoryRef.current = [...screenHistoryRef.current.slice(-19), previousScreenRef.current];
+    } else if (
+      previousScreenRef.current !== "splash" &&
+      previousScreenRef.current !== "signin"
+    ) {
+      screenHistoryRef.current = [
+        ...screenHistoryRef.current.slice(-19),
+        previousScreenRef.current,
+      ];
     }
     previousScreenRef.current = screen;
   }, [screen]);
 
   const [fontsLoaded] = useFonts({
-    'Open Sans': OpenSans_400Regular,
-    'Open Sans Bold': OpenSans_700Bold,
-    RBNylo: require('./assets/fonts/RBNylo-Bold.otf'),
+    "Open Sans": OpenSans_400Regular,
+    "Open Sans Bold": OpenSans_700Bold,
+    RBNylo: require("./assets/fonts/RBNylo-Bold.otf"),
   });
 
   const translations = useMemo(() => LANG[language], [language]);
-  const authDisplayName = authUser?.name || authUser?.readerCode || translations.profileNameUnavailable;
-  const authAvatarInitial = authDisplayName.charAt(0).toUpperCase() || 'M';
-  const authAccountMeta = [authUser?.readerCode, authUser?.role].filter(Boolean).join(' · ');
+  const authDisplayName =
+    authUser?.name ||
+    authUser?.readerCode ||
+    translations.profileNameUnavailable;
+  const authAvatarInitial = authDisplayName.charAt(0).toUpperCase() || "M";
+  const authAccountMeta = [authUser?.readerCode, authUser?.role]
+    .filter(Boolean)
+    .join(" · ");
 
   useEffect(() => {
     let active = true;
@@ -266,13 +387,13 @@ export default function App() {
       .then((user) => {
         if (!active) return;
         if (user) {
-          setScreen(user.role === 'admin' ? 'admin' : 'list');
+          setScreen(user.role === "admin" ? "admin" : "list");
           void dispatch(fetchCurrentUser());
         }
       })
       .catch((error: unknown) => {
         if (!active) return;
-        console.error('Unable to restore the saved session:', error);
+        console.error("Unable to restore the saved session:", error);
       });
 
     return () => {
@@ -281,12 +402,12 @@ export default function App() {
   }, [dispatch]);
 
   useEffect(() => {
-    if (screen !== 'camera' || !cameraPermission?.granted) return undefined;
+    if (screen !== "camera" || !cameraPermission?.granted) return undefined;
     let cancelled = false;
 
     // CameraView.isAvailableAsync() is only implemented for Web in expo-camera.
     // On native platforms (Android and iOS), it throws an UnavailabilityError.
-    if (Platform.OS !== 'web') {
+    if (Platform.OS !== "web") {
       setCameraAvailable(true);
       return undefined;
     }
@@ -298,7 +419,11 @@ export default function App() {
       .catch((error: unknown) => {
         if (!cancelled) {
           setCameraAvailable(false);
-          setCameraError(error instanceof Error ? error.message : translations.cameraNotAvailable);
+          setCameraError(
+            error instanceof Error
+              ? error.message
+              : translations.cameraNotAvailable,
+          );
         }
       });
     return () => {
@@ -307,63 +432,114 @@ export default function App() {
   }, [cameraPermission?.granted, screen, translations.cameraNotAvailable]);
 
   useEffect(() => {
-    if (screen !== 'list' || authUser?.role !== 'meter_inspector') return undefined;
+    if (screen !== "list" || authUser?.role !== "meter_inspector")
+      return undefined;
     let active = true;
-    setAssignedCustomersLoading(true);
-    setAssignedCustomersError('');
-    getPendingMeterReadings()
+    if (!hasLoadedPendingReadingsRef.current) setAssignedCustomersLoading(true);
+    setAssignedCustomersError("");
+    getPendingMeterReadings(authUser.meterReaderId)
       .then((records) => {
         if (!active) return;
+        hasLoadedPendingReadingsRef.current = true;
         const customers = records.map(toSubmittedReadingCustomer);
         setAssignedCustomers(customers);
         if (customers.length > 0) {
-          setSelectedCustomer((current) =>
-            customers.find((customer) => customer.acc === current.acc) ?? customers[0],
+          setSelectedCustomer(
+            (current) =>
+              customers.find((customer) => customer.acc === current.acc) ??
+              customers[0],
           );
         }
       })
-      .catch(() => {
+      .catch((error: unknown) => {
         if (!active) return;
         setAssignedCustomers([]);
-        setAssignedCustomersError('');
+        setAssignedCustomersError(
+          error instanceof Error
+            ? error.message
+            : "Could not load pending meter readings.",
+        );
       })
       .finally(() => {
-        if (active) setAssignedCustomersLoading(false);
+        if (active) {
+          hasLoadedPendingReadingsRef.current = true;
+          setAssignedCustomersLoading(false);
+        }
       });
     return () => {
       active = false;
     };
-  }, [assignedCustomersRefreshKey, authUser?.readerCode, authUser?.role, readingDashboardTab, screen]);
+  }, [
+    assignedCustomersRefreshKey,
+    authUser?.meterReaderId,
+    authUser?.readerCode,
+    authUser?.role,
+    screen,
+  ]);
 
   useEffect(() => {
-    const showingDashboardCompletedTab = isWeb && screen === 'list' && readingDashboardTab === 'completed';
-    if ((screen !== 'completed' && !showingDashboardCompletedTab) || authUser?.role !== 'meter_inspector') return undefined;
+    if (
+      (screen !== "list" && screen !== "completed") ||
+      authUser?.role !== "meter_inspector"
+    )
+      return undefined;
     let active = true;
-    setCompletedReadingsLoading(true);
-    setCompletedReadingsError('');
+    if (!hasLoadedCompletedReadingsRef.current)
+      setCompletedReadingsLoading(true);
+    setCompletedReadingsError("");
     getCompletedMeterReadings()
       .then((records) => {
-        if (active) setCompletedReadings(records.map(toCompletedReading));
+        if (active) {
+          hasLoadedCompletedReadingsRef.current = true;
+          setCompletedReadings(records.map(toCompletedReading));
+        }
       })
-      .catch(() => {
+      .catch((error: unknown) => {
         if (active) {
           setCompletedReadings([]);
-          setCompletedReadingsError('');
+          setCompletedReadingsError(
+            error instanceof Error
+              ? error.message
+              : "Could not load completed meter readings.",
+          );
         }
       })
       .finally(() => {
-        if (active) setCompletedReadingsLoading(false);
+        if (active) {
+          hasLoadedCompletedReadingsRef.current = true;
+          setCompletedReadingsLoading(false);
+        }
       });
     return () => {
       active = false;
     };
-  }, [assignedCustomersRefreshKey, authUser?.readerCode, authUser?.role, readingDashboardTab, screen]);
+  }, [
+    assignedCustomersRefreshKey,
+    authUser?.readerCode,
+    authUser?.role,
+    screen,
+  ]);
 
   useEffect(() => {
-    if (screen !== 'sr' || authUser?.role !== 'meter_inspector') return undefined;
+    if (
+      (screen !== "list" && screen !== "completed") ||
+      authUser?.role !== "meter_inspector"
+    )
+      return undefined;
+
+    const refreshInterval = setInterval(() => {
+      setAssignedCustomersRefreshKey((value) => value + 1);
+    }, 30_000);
+
+    return () => clearInterval(refreshInterval);
+  }, [authUser?.role, screen]);
+
+  useEffect(() => {
+    if (screen !== "sr" || authUser?.role !== "meter_inspector")
+      return undefined;
     let active = true;
     setServiceRequestsLoading(true);
-    setServiceRequestsError('');
+    setServiceRequestsError("");
     getServiceRequests()
       .then((requests) => {
         if (active) setServiceRequests(requests);
@@ -371,7 +547,7 @@ export default function App() {
       .catch(() => {
         if (!active) return;
         setServiceRequests([]);
-        setServiceRequestsError('');
+        setServiceRequestsError("");
       })
       .finally(() => {
         if (active) setServiceRequestsLoading(false);
@@ -379,15 +555,23 @@ export default function App() {
     return () => {
       active = false;
     };
-  }, [authUser?.role, screen, serviceRequestsRefreshKey, translations.serviceRequestLoadFailed]);
+  }, [
+    authUser?.role,
+    screen,
+    serviceRequestsRefreshKey,
+    translations.serviceRequestLoadFailed,
+  ]);
 
   const filteredCustomers = useMemo(() => {
     const term = searchText.trim().toLowerCase();
     return assignedCustomers.filter((customer) => {
-      const matchesApproval = billApprovalFilter !== 'approved';
+      const matchesApproval = billApprovalFilter !== "approved";
       if (!matchesApproval) return false;
-      const matchesWard = wardFilter === 'all'
-        || (wardFilter === NO_WARD_FILTER ? !customer.wardNo : customer.wardNo === wardFilter);
+      const matchesWard =
+        wardFilter === "all" ||
+        (wardFilter === NO_WARD_FILTER
+          ? !customer.wardNo
+          : customer.wardNo === wardFilter);
       if (!matchesWard) return false;
       if (!term) return true;
       return [
@@ -395,9 +579,9 @@ export default function App() {
         customer.addr,
         customer.acc,
         customer.meter,
-        customer.wardNo ?? '',
+        customer.wardNo ?? "",
       ]
-        .join(' ')
+        .join(" ")
         .toLowerCase()
         .includes(term);
     });
@@ -406,14 +590,27 @@ export default function App() {
   const filteredCompletedReadings = useMemo(() => {
     const term = searchText.trim().toLowerCase();
     return completedReadings.filter((record) => {
-      const matchesApproval = billApprovalFilter !== 'approvalRequired';
+      const matchesApproval = billApprovalFilter !== "approvalRequired";
       if (!matchesApproval) return false;
-      const matchesWard = wardFilter === 'all'
-        || (wardFilter === NO_WARD_FILTER ? !record.wardNo : record.wardNo === wardFilter);
+      const matchesWard =
+        wardFilter === "all" ||
+        (wardFilter === NO_WARD_FILTER
+          ? !record.wardNo
+          : record.wardNo === wardFilter);
       if (!matchesWard) return false;
       if (!term) return true;
-      return [record.customer, record.account, record.meter, record.current, record.date, record.wardNo ?? '']
-        .join(' ')
+      return [
+        record.customer,
+        record.account,
+        record.meter,
+        record.billNo,
+        record.currentReading,
+        record.consumption,
+        record.totalAmount,
+        record.date,
+        record.wardNo ?? "",
+      ]
+        .join(" ")
         .toLowerCase()
         .includes(term);
     });
@@ -427,24 +624,30 @@ export default function App() {
     ]) {
       if (wardNo?.trim()) wardNumbers.add(wardNo.trim());
     }
-    return Array.from(wardNumbers).sort((left, right) => left.localeCompare(right, undefined, { numeric: true }));
+    return Array.from(wardNumbers).sort((left, right) =>
+      left.localeCompare(right, undefined, { numeric: true }),
+    );
   }, [assignedCustomers, completedReadings]);
 
   const getWardFilterLabel = (value: string) => {
-    if (value === 'all') return translations.allWards;
+    if (value === "all") return translations.allWards;
     if (value === NO_WARD_FILTER) return translations.wardNotAvailable;
     return `${translations.ward} ${value}`;
   };
-  const activeReadingFilterCount = Number(wardFilter !== 'all') + Number(billApprovalFilter !== 'all');
+  const activeReadingFilterCount =
+    Number(wardFilter !== "all") + Number(billApprovalFilter !== "all");
 
   const getBillApprovalFilterLabel = (value: BillApprovalFilter) => {
-    if (value === 'approved') return translations.approvedBills;
-    if (value === 'approvalRequired') return translations.approvalRequired;
+    if (value === "approved") return translations.approvedBills;
+    if (value === "approvalRequired") return translations.approvalRequired;
     return translations.allBills;
   };
 
   const getReadingEmptyMessage = (recordCount: number, emptyMessage: string) =>
-    recordCount === 0 && wardFilter === 'all' && billApprovalFilter === 'all' && !searchText.trim()
+    recordCount === 0 &&
+    wardFilter === "all" &&
+    billApprovalFilter === "all" &&
+    !searchText.trim()
       ? emptyMessage
       : translations.noFilteredResults;
 
@@ -468,7 +671,9 @@ export default function App() {
           }}
           style={styles.filterModalScrim}
         />
-        <View style={[styles.filterModalCard, isWeb && styles.filterModalCardWeb]}>
+        <View
+          style={[styles.filterModalCard, isWeb && styles.filterModalCardWeb]}
+        >
           <View style={styles.filterModalHeader}>
             <View style={styles.filterModalTitleRow}>
               <Text style={styles.filterModalTitle}>{translations.filter}</Text>
@@ -487,56 +692,96 @@ export default function App() {
           </View>
 
           <View style={styles.filterSection}>
-            <Text style={styles.filterSectionTitle}>{translations.billApprovalType}</Text>
+            <Text style={styles.filterSectionTitle}>
+              {translations.billApprovalType}
+            </Text>
             <View style={styles.filterOptionsList}>
-              {(['all', 'approved', 'approvalRequired'] as const).map((option) => {
-                const selected = draftBillApprovalFilter === option;
-                return (
-                  <Pressable
-                    key={option}
-                    accessibilityRole="button"
-                    accessibilityState={{ selected }}
-                    onPress={() => setDraftBillApprovalFilter(option)}
-                    style={[styles.filterOptionItem, selected && styles.filterOptionItemActive]}
-                  >
-                    <View style={styles.filterOptionLeft}>
-                      <View style={[styles.filterRadioCircle, selected && styles.filterRadioCircleActive]}>
-                        {selected ? <View style={styles.filterRadioDot} /> : null}
+              {(["all", "approved", "approvalRequired"] as const).map(
+                (option) => {
+                  const selected = draftBillApprovalFilter === option;
+                  return (
+                    <Pressable
+                      key={option}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected }}
+                      onPress={() => setDraftBillApprovalFilter(option)}
+                      style={[
+                        styles.filterOptionItem,
+                        selected && styles.filterOptionItemActive,
+                      ]}
+                    >
+                      <View style={styles.filterOptionLeft}>
+                        <View
+                          style={[
+                            styles.filterRadioCircle,
+                            selected && styles.filterRadioCircleActive,
+                          ]}
+                        >
+                          {selected ? (
+                            <View style={styles.filterRadioDot} />
+                          ) : null}
+                        </View>
+                        <Text
+                          style={[
+                            styles.filterOptionLabel,
+                            selected && styles.filterOptionLabelActive,
+                          ]}
+                        >
+                          {getBillApprovalFilterLabel(option)}
+                        </Text>
                       </View>
-                      <Text style={[styles.filterOptionLabel, selected && styles.filterOptionLabelActive]}>
-                        {getBillApprovalFilterLabel(option)}
-                      </Text>
-                    </View>
-                  </Pressable>
-                );
-              })}
+                    </Pressable>
+                  );
+                },
+              )}
             </View>
           </View>
 
           <View style={styles.filterSection}>
-            <Text style={styles.filterSectionTitle}>{translations.wardNumber}</Text>
+            <Text style={styles.filterSectionTitle}>
+              {translations.wardNumber}
+            </Text>
             <Pressable
               accessibilityRole="button"
               accessibilityState={{ expanded: wardOptionOpen }}
               onPress={() => setWardOptionOpen((open) => !open)}
               style={styles.problemSelect}
             >
-              <Text style={styles.problemSelectText}>{getWardFilterLabel(draftWardFilter)}</Text>
-              <Text style={styles.problemSelectText}>{wardOptionOpen ? '▴' : '▾'}</Text>
+              <Text style={styles.problemSelectText}>
+                {getWardFilterLabel(draftWardFilter)}
+              </Text>
+              <Text style={styles.problemSelectText}>
+                {wardOptionOpen ? "▴" : "▾"}
+              </Text>
             </Pressable>
             {wardOptionOpen ? (
-              <ScrollView style={styles.readingFilterOptions} nestedScrollEnabled>
+              <ScrollView
+                style={styles.readingFilterOptions}
+                nestedScrollEnabled
+              >
                 {[
-                  { value: 'all', label: translations.allWards },
-                  ...availableWardNumbers.map((wardNo) => ({ value: wardNo, label: `${translations.ward} ${wardNo}` })),
-                  ...([...assignedCustomers, ...completedReadings].some((record) => !record.wardNo)
-                    ? [{ value: NO_WARD_FILTER, label: translations.wardNotAvailable }]
+                  { value: "all", label: translations.allWards },
+                  ...availableWardNumbers.map((wardNo) => ({
+                    value: wardNo,
+                    label: `${translations.ward} ${wardNo}`,
+                  })),
+                  ...([...assignedCustomers, ...completedReadings].some(
+                    (record) => !record.wardNo,
+                  )
+                    ? [
+                        {
+                          value: NO_WARD_FILTER,
+                          label: translations.wardNotAvailable,
+                        },
+                      ]
                     : []),
                 ].map((option) => (
                   <Pressable
                     key={option.value}
                     accessibilityRole="button"
-                    accessibilityState={{ selected: draftWardFilter === option.value }}
+                    accessibilityState={{
+                      selected: draftWardFilter === option.value,
+                    }}
                     onPress={() => {
                       setDraftWardFilter(option.value);
                       setWardOptionOpen(false);
@@ -554,13 +799,15 @@ export default function App() {
             <Pressable
               accessibilityRole="button"
               onPress={() => {
-                setDraftWardFilter('all');
-                setDraftBillApprovalFilter('all');
+                setDraftWardFilter("all");
+                setDraftBillApprovalFilter("all");
                 setWardOptionOpen(false);
               }}
               style={styles.filterResetButton}
             >
-              <Text style={styles.filterResetButtonText}>{translations.reset}</Text>
+              <Text style={styles.filterResetButtonText}>
+                {translations.reset}
+              </Text>
             </Pressable>
             <Pressable
               accessibilityRole="button"
@@ -572,7 +819,9 @@ export default function App() {
               }}
               style={styles.filterApplyButton}
             >
-              <Text style={styles.filterApplyButtonText}>{translations.apply}</Text>
+              <Text style={styles.filterApplyButtonText}>
+                {translations.apply}
+              </Text>
             </Pressable>
           </View>
         </View>
@@ -581,28 +830,33 @@ export default function App() {
   );
   const currentReadingValue = Number(reading);
   const previousReadingValue = Number(
-    selectedCustomer.previousReading?.replace(/,/g, '')
-    || '0',
+    selectedCustomer.previousReading?.replace(/,/g, "") || "0",
   );
-  const readingIsValid = reading.trim() !== '' && Number.isFinite(currentReadingValue) && currentReadingValue >= previousReadingValue;
-  const cycleUsage = readingIsValid ? currentReadingValue - previousReadingValue : 0;
+  const readingIsValid =
+    reading.trim() !== "" &&
+    Number.isFinite(currentReadingValue) &&
+    currentReadingValue >= previousReadingValue;
+  const cycleUsage = readingIsValid
+    ? currentReadingValue - previousReadingValue
+    : 0;
   const isHighReading = readingIsValid && cycleUsage >= 100;
   const isZeroReading = readingIsValid && cycleUsage === 0;
-  const canReviewReading = readingIsValid
-    && (!isHighReading && !isZeroReading || readingConfirmed)
-    && (!isHighReading || readingRemarks.trim().length > 0);
+  const canReviewReading =
+    readingIsValid &&
+    ((!isHighReading && !isZeroReading) || readingConfirmed) &&
+    (!isHighReading || readingRemarks.trim().length > 0);
 
   const beginReading = async () => {
-    setCameraTarget('reading');
+    setCameraTarget("reading");
     setReading((previousReadingValue + 82).toFixed(2));
-    setReadingRemarks('');
+    setReadingRemarks("");
     setReadingConfirmed(false);
-    setMeterCondition('normal');
+    setMeterCondition("normal");
     setCameraPhoto(null);
-    setCameraError('');
+    setCameraError("");
     setCameraReady(false);
-    setCameraAvailable(Platform.OS === 'web' ? null : true);
-    setScreen('camera');
+    setCameraAvailable(Platform.OS === "web" ? null : true);
+    setScreen("camera");
     if (!cameraPermission?.granted && cameraPermission?.canAskAgain !== false) {
       try {
         await requestCameraPermission();
@@ -613,16 +867,20 @@ export default function App() {
   };
 
   const allowCamera = async () => {
-    setCameraError('');
+    setCameraError("");
     try {
       const response = await requestCameraPermission();
       if (response && !response.granted) {
         setCameraError(translations.cameraPermissionDenied);
-      } else if (response?.granted && Platform.OS !== 'web') {
+      } else if (response?.granted && Platform.OS !== "web") {
         setCameraAvailable(true);
       }
     } catch (error) {
-      setCameraError(error instanceof Error ? error.message : translations.cameraPermissionDenied);
+      setCameraError(
+        error instanceof Error
+          ? error.message
+          : translations.cameraPermissionDenied,
+      );
     }
   };
 
@@ -633,86 +891,99 @@ export default function App() {
   ): Promise<CameraCapturedPicture> => {
     for (const maxEdge of [1280, 1024, 800, 640]) {
       const resizeTo = Math.min(maxEdge, Math.max(width, height));
-      const dimensions = width >= height ? { width: resizeTo } : { height: resizeTo };
+      const dimensions =
+        width >= height ? { width: resizeTo } : { height: resizeTo };
       for (const quality of [0.65, 0.5, 0.35]) {
         const compressed = await ImageManipulator.manipulate(uri)
           .resize(dimensions)
           .renderAsync()
-          .then((image) => image.saveAsync({
-            base64: true,
-            compress: quality,
-            format: SaveFormat.JPEG,
-          }));
+          .then((image) =>
+            image.saveAsync({
+              base64: true,
+              compress: quality,
+              format: SaveFormat.JPEG,
+            }),
+          );
         if (!compressed.base64) {
-          throw new Error('Image compression did not produce image data.');
+          throw new Error("Image compression did not produce image data.");
         }
         if (compressed.base64.length * 0.75 <= 900_000) {
           return {
             uri: compressed.uri,
             width: compressed.width,
             height: compressed.height,
-            format: 'jpg',
+            format: "jpg",
             base64: compressed.base64,
           };
         }
       }
     }
-    throw new Error('The meter photo could not be reduced below the 1 MB upload limit.');
+    throw new Error(
+      "The meter photo could not be reduced below the 1 MB upload limit.",
+    );
   };
 
   const chooseNewReadingPhotoFromGallery = async () => {
-    setNewReadingErrorMsg('');
+    setNewReadingErrorMsg("");
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ['images'],
+        mediaTypes: ["images"],
         allowsEditing: false,
         quality: 1,
       });
       if (result.canceled) return;
       const asset = result.assets[0];
       if (!asset) {
-        throw new Error('The selected image could not be read.');
+        throw new Error("The selected image could not be read.");
       }
-      setNewReadingPhoto(await compressNewReadingPhoto(asset.uri, asset.width, asset.height));
+      setNewReadingPhoto(
+        await compressNewReadingPhoto(asset.uri, asset.width, asset.height),
+      );
     } catch (error) {
       setNewReadingErrorMsg(
         error instanceof Error
           ? `Could not load or resize the selected meter photo. ${error.message}`
-          : 'Could not load or resize the selected meter photo.',
+          : "Could not load or resize the selected meter photo.",
       );
     }
   };
 
   const captureMeterPhoto = async () => {
     if (!cameraReady || !cameraRef.current) return;
-    setCameraError('');
+    setCameraError("");
     try {
       const photo = await cameraRef.current.takePictureAsync({ quality: 0.8 });
       if (!photo) {
         setCameraError(translations.cameraCaptureError);
         return;
       }
-      if (cameraTarget === 'newReading') {
-        setNewReadingPhoto(await compressNewReadingPhoto(photo.uri, photo.width, photo.height));
-      } else if (cameraTarget === 'service') {
+      if (cameraTarget === "newReading") {
+        setNewReadingPhoto(
+          await compressNewReadingPhoto(photo.uri, photo.width, photo.height),
+        );
+      } else if (cameraTarget === "service") {
         setServicePhoto(photo);
       } else {
         setCameraPhoto(photo);
       }
     } catch (error) {
-      setCameraError(error instanceof Error ? `${translations.cameraCaptureError} ${error.message}` : translations.cameraCaptureError);
+      setCameraError(
+        error instanceof Error
+          ? `${translations.cameraCaptureError} ${error.message}`
+          : translations.cameraCaptureError,
+      );
     }
   };
 
   const retakeMeterPhoto = () => {
-    if (cameraTarget === 'newReading') {
+    if (cameraTarget === "newReading") {
       setNewReadingPhoto(null);
-    } else if (cameraTarget === 'service') {
+    } else if (cameraTarget === "service") {
       setServicePhoto(null);
     } else {
       setCameraPhoto(null);
     }
-    setCameraError('');
+    setCameraError("");
     setCameraReady(false);
   };
 
@@ -724,16 +995,19 @@ export default function App() {
     }
 
     setSignInLoading(true);
-    setSignInMessage('');
+    setSignInMessage("");
     try {
       const user = adminSignInMode
-        ? await loginAdmin({ username: meterReaderId.trim(), password: signInPassword })
+        ? await loginAdmin({
+            email: meterReaderId.trim(),
+            password: signInPassword,
+          })
         : await loginMeterReader({
             meterReaderId: meterReaderId.trim(),
             password: signInPassword,
           });
       dispatch(setAuthenticatedUser(user));
-      setScreen(user.role === 'admin' ? 'admin' : 'list');
+      setScreen(user.role === "admin" ? "admin" : "list");
       void dispatch(fetchCurrentUser());
     } catch (error) {
       setSignInMessage(
@@ -741,9 +1015,9 @@ export default function App() {
           ? translations.loginStorageError
           : error instanceof ApiConnectionError
             ? translations.loginConnectionFailed
-          : error instanceof ApiRequestError
-            ? `${translations.loginFailed} (HTTP ${error.status})`
-            : translations.loginFailed,
+            : error instanceof ApiRequestError
+              ? `${translations.loginFailed} (HTTP ${error.status}${error.responseMessage ? `: ${error.responseMessage}` : ""})`
+              : translations.loginFailed,
       );
     } finally {
       setSignInLoading(false);
@@ -751,71 +1025,70 @@ export default function App() {
   };
 
   const handleMeterOrAccountChange = (val: string) => {
-    const identifier = val.trim();
-    const requestSequence = ++newReadingLookupSequence.current;
-    if (newReadingLookupTimer.current) {
-      clearTimeout(newReadingLookupTimer.current);
-      newReadingLookupTimer.current = null;
-    }
+    newReadingLookupSequence.current += 1;
+    setNewReadingAutoFetching(false);
     setNewReadingCustomer(null);
     setNewReadingPhoto(null);
-    setNewReadingLookupError('');
-    setNewReadingSuccessMsg('');
-    setNewReadingErrorMsg('');
+    setNewReadingLookupError("");
+    setNewReadingSuccessMsg("");
+    setNewReadingErrorMsg("");
     setNewReadingForm((previous) => ({
       ...previous,
       meterOrAccount: val,
-      customerName: '',
-      mod: '',
-      previousBill: '',
-      currentBill: '',
+      customerName: "",
+      mod: "",
+      previousBill: "",
+      currentBill: "",
     }));
+  };
+
+  const lookupNewReadingCustomer = async (
+    value = newReadingForm.meterOrAccount,
+  ) => {
+    const identifier = value.trim();
     if (!identifier) {
-      setNewReadingAutoFetching(false);
+      setNewReadingLookupError("Enter a CWASA account number first.");
       return;
     }
 
+    const requestSequence = ++newReadingLookupSequence.current;
     setNewReadingAutoFetching(true);
-    newReadingLookupTimer.current = setTimeout(() => {
-      void lookupReadingCustomer(identifier)
-        .then((customer) => {
-          if (newReadingLookupSequence.current !== requestSequence) return;
-          setNewReadingCustomer(customer);
-          setNewReadingForm((previous) => ({
-            ...previous,
-            customerName: customer.customerName,
-            mod: customer.wardNo ? `Ward ${customer.wardNo}` : '',
-            previousBill: customer.previousBill
-              ? `৳${Number(customer.previousBill).toLocaleString('en-US', { minimumFractionDigits: 2 })}`
-              : '',
-          }));
-        })
-        .catch((error: unknown) => {
-          if (newReadingLookupSequence.current !== requestSequence) return;
-          setNewReadingLookupError(
-            error instanceof ApiRequestError && error.status === 404
-              ? 'No customer was found for that meter or account number.'
-              : 'Could not look up the customer. Check the API and source database, then retry.',
-          );
-        })
-        .finally(() => {
-          if (newReadingLookupSequence.current === requestSequence) {
-            setNewReadingAutoFetching(false);
-            newReadingLookupTimer.current = null;
-          }
-        });
-    }, 450);
+    setNewReadingLookupError("");
+    try {
+      const customer = await lookupReadingCustomer(identifier);
+      if (newReadingLookupSequence.current !== requestSequence) return;
+      setNewReadingCustomer(customer);
+      setNewReadingForm((previous) => ({
+        ...previous,
+        customerName: customer.customerName,
+        mod: customer.wardNo ? `Ward ${customer.wardNo}` : "",
+        previousBill: customer.lastMeterReading ?? "",
+      }));
+    } catch (error) {
+      if (newReadingLookupSequence.current !== requestSequence) return;
+      setNewReadingLookupError(
+        error instanceof ApiRequestError && error.status === 404
+          ? "No customer was found for that CWASA account number."
+          : "Could not look up the customer. Check the API and source database, then retry.",
+      );
+    } finally {
+      if (newReadingLookupSequence.current === requestSequence) {
+        setNewReadingAutoFetching(false);
+      }
+    }
   };
 
   const fetchDeviceLocation = async () => {
     setNewReadingLocationLoading(true);
     setNewReadingLocationSuccess(false);
-    setNewReadingLocationError('');
-    setNewReadingErrorMsg('');
+    setNewReadingLocationError("");
+    setNewReadingErrorMsg("");
     try {
       const permission = await Location.requestForegroundPermissionsAsync();
-      if (permission.status !== 'granted') {
-        throw new Error('Allow location access in your device or browser settings.');
+      if (permission.status !== "granted") {
+        throw new Error(
+          "Allow location access in your device or browser settings.",
+        );
       }
       const position = await Location.getCurrentPositionAsync({
         accuracy: Location.Accuracy.High,
@@ -830,7 +1103,7 @@ export default function App() {
       setNewReadingLocationError(
         error instanceof Error
           ? error.message
-          : 'Could not read device location. Check location permission and retry.',
+          : "Could not read device location. Check location permission and retry.",
       );
     } finally {
       setNewReadingLocationLoading(false);
@@ -838,17 +1111,17 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (screen === 'newReading' && !newReadingForm.latitude) {
+    if (screen === "newReading" && !newReadingForm.latitude) {
       fetchDeviceLocation();
     }
   }, [screen]);
 
   const openNewReadingCamera = async () => {
-    setCameraTarget('newReading');
-    setCameraError('');
+    setCameraTarget("newReading");
+    setCameraError("");
     setCameraReady(false);
-    setCameraAvailable(Platform.OS === 'web' ? null : true);
-    setScreen('camera');
+    setCameraAvailable(Platform.OS === "web" ? null : true);
+    setScreen("camera");
     if (!cameraPermission?.granted && cameraPermission?.canAskAgain !== false) {
       try {
         await requestCameraPermission();
@@ -859,11 +1132,11 @@ export default function App() {
   };
 
   const openServiceCamera = async () => {
-    setCameraTarget('service');
-    setCameraError('');
+    setCameraTarget("service");
+    setCameraError("");
     setCameraReady(false);
-    setCameraAvailable(Platform.OS === 'web' ? null : true);
-    setScreen('camera');
+    setCameraAvailable(Platform.OS === "web" ? null : true);
+    setScreen("camera");
     if (!cameraPermission?.granted && cameraPermission?.canAskAgain !== false) {
       try {
         await requestCameraPermission();
@@ -874,10 +1147,10 @@ export default function App() {
   };
 
   const pickServiceImageFromGallery = () => {
-    if (typeof document !== 'undefined') {
-      const input = document.createElement('input');
-      input.type = 'file';
-      input.accept = 'image/*';
+    if (typeof document !== "undefined") {
+      const input = document.createElement("input");
+      input.type = "file";
+      input.accept = "image/*";
       input.onchange = (e: Event) => {
         const target = e.target as HTMLInputElement;
         if (target.files && target.files[0]) {
@@ -887,7 +1160,7 @@ export default function App() {
             uri: url,
             width: 800,
             height: 600,
-            format: 'jpg',
+            format: "jpg",
           });
         }
       };
@@ -897,97 +1170,119 @@ export default function App() {
 
   const resetNewReadingForm = () => {
     newReadingLookupSequence.current += 1;
-    if (newReadingLookupTimer.current) {
-      clearTimeout(newReadingLookupTimer.current);
-      newReadingLookupTimer.current = null;
-    }
     setNewReadingForm({
-      meterOrAccount: '',
-      customerName: '',
-      mod: '',
-      previousBill: '',
-      currentBill: '',
-      latitude: '',
-      longitude: '',
+      meterOrAccount: "",
+      customerName: "",
+      mod: "",
+      previousBill: "",
+      currentBill: "",
+      latitude: "",
+      longitude: "",
+      ...getCurrentBillingPeriod(),
     });
     setNewReadingCustomer(null);
-    setNewReadingLookupError('');
+    setNewReadingLookupError("");
     setNewReadingPhoto(null);
     setNewReadingLocationLoading(false);
     setNewReadingLocationSuccess(false);
-    setNewReadingLocationError('');
+    setNewReadingLocationError("");
     setNewReadingSaving(false);
-    setNewReadingErrorMsg('');
-    setNewReadingSuccessMsg('');
+    setNewReadingErrorMsg("");
+    setNewReadingSuccessMsg("");
   };
 
   const openNewReadingForSelectedCustomer = () => {
     resetNewReadingForm();
     handleMeterOrAccountChange(selectedCustomer.acc);
-    setScreen('newReading');
+    void lookupNewReadingCustomer(selectedCustomer.acc);
+    setScreen("newReading");
   };
 
   const submitNewReadingForm = async () => {
-    if (newReadingLookupTimer.current) {
-      clearTimeout(newReadingLookupTimer.current);
-      newReadingLookupTimer.current = null;
-    }
     newReadingLookupSequence.current += 1;
-    setNewReadingErrorMsg('');
-    setNewReadingSuccessMsg('');
+    setNewReadingErrorMsg("");
+    setNewReadingSuccessMsg("");
     const identifier = newReadingForm.meterOrAccount.trim();
-    const currentBill = newReadingForm.currentBill.trim();
-    if (!identifier || !currentBill) {
-      setNewReadingErrorMsg('Enter a meter or account number and current bill.');
+    const currentReadingText = newReadingForm.currentBill.trim();
+    if (!identifier || !currentReadingText) {
+      setNewReadingErrorMsg(
+        "Enter a CWASA account number and current meter reading.",
+      );
       return;
     }
-    if (!newReadingPhoto?.base64) {
+    if (!newReadingPhoto?.uri) {
       setNewReadingErrorMsg(translations.meterPhotoRequired);
       return;
     }
-    if (!/^\d{1,10}(?:\.\d{1,2})?$/.test(currentBill)) {
-      setNewReadingErrorMsg('Enter a valid non-negative bill amount with up to 2 decimal places.');
+    const currentReading = Number(currentReadingText);
+    if (!Number.isFinite(currentReading) || currentReading < 0) {
+      setNewReadingErrorMsg("Enter a valid non-negative meter reading.");
       return;
     }
     if (!newReadingForm.latitude || !newReadingForm.longitude) {
-      setNewReadingErrorMsg('Capture the device GPS location before submitting.');
+      setNewReadingErrorMsg(
+        "Capture the device GPS location before submitting.",
+      );
+      return;
+    }
+    const billingMonth = Number(newReadingForm.billingMonth);
+    const billingYear = Number(newReadingForm.billingYear);
+    if (
+      !Number.isInteger(billingMonth) ||
+      billingMonth < 1 ||
+      billingMonth > 12
+    ) {
+      setNewReadingErrorMsg(translations.invalidBillingMonth);
+      return;
+    }
+    if (!Number.isInteger(billingYear) || billingYear < 2000) {
+      setNewReadingErrorMsg(translations.invalidBillingYear);
       return;
     }
 
     setNewReadingSaving(true);
     try {
-      const customer = newReadingCustomer?.accountNo === identifier ||
-        newReadingCustomer?.meterNo?.toLowerCase() === identifier.toLowerCase()
-        ? newReadingCustomer
-        : await lookupReadingCustomer(identifier);
+      const customer =
+        newReadingCustomer?.accountNo === identifier
+          ? newReadingCustomer
+          : await lookupReadingCustomer(identifier);
+      if (!customer.meterNo) {
+        throw new Error("The customer record does not have a meter number.");
+      }
       const saved = await createMeterReading({
-        identifier,
-        currentBill,
+        accountNo: customer.accountNo,
+        meterNo: customer.meterNo,
+        currentReading,
+        billingMonth,
+        billingYear,
         latitude: Number(newReadingForm.latitude),
         longitude: Number(newReadingForm.longitude),
-        photoBase64: newReadingPhoto.base64,
+        photoUri: newReadingPhoto.uri,
+        customerName: customer.customerName,
       });
       setNewReadingCustomer(customer);
-      const successMessage = translations.readingSubmittedForReview
-        .replace('{name}', saved.customerName)
-        .replace('{account}', saved.accountNo);
+      const successMessage = `${translations.readingCreatedSuccess} ${customer.customerName} (${saved.accountNo})`;
       resetNewReadingForm();
       setAssignedCustomersRefreshKey((value) => value + 1);
       setNewReadingSuccessMsg(successMessage);
-      setNewReadingErrorMsg('');
+      setNewReadingErrorMsg("");
     } catch (error) {
       setNewReadingErrorMsg(
         error instanceof ApiRequestError && error.status === 404
-          ? 'No customer was found for that meter or account number.'
+          ? "No customer was found for that CWASA account number."
           : error instanceof ApiRequestError && error.status === 413
-            ? 'The compressed meter photo is too large. Retake the photo and retry.'
+            ? "The compressed meter photo is too large. Retake the photo and retry."
             : error instanceof ApiConnectionError
-              ? 'Could not connect to the API. Check that the backend is running.'
+              ? "Could not connect to the API. Check that the backend is running."
               : error instanceof ApiRequestError
                 ? error.status >= 500
                   ? `The API could not save the reading (HTTP ${error.status}). Check the backend log and database setup.`
-                  : `The API rejected the reading (HTTP ${error.status})${error.responseMessage ? `: ${error.responseMessage}` : '.'}`
-              : 'Could not save the reading. Check the API/database setup and retry.',
+                  : `The API rejected the reading (HTTP ${error.status})${error.responseMessage ? `: ${error.responseMessage}` : "."}`
+                : error instanceof Error &&
+                    error.message ===
+                      "The customer record does not have a meter number."
+                  ? error.message
+                  : "Could not save the reading. Check the API/database setup and retry.",
       );
     } finally {
       setNewReadingSaving(false);
@@ -998,29 +1293,68 @@ export default function App() {
     <View style={styles.webPageFooter}>
       <View style={styles.webPageFooterDivider} />
       <View style={styles.webPageFooterRow}>
-        <View style={styles.webPageFooterBrand}>
-        </View>
+        <View style={styles.webPageFooterBrand}></View>
       </View>
+    </View>
+  );
+
+  const renderLanguageToggle = (compact = false) => (
+    <View
+      accessibilityLabel={translations.language}
+      accessibilityRole="radiogroup"
+      style={[
+        styles.segmentedControl,
+        compact ? styles.drawerLanguageControl : styles.languageControl,
+      ]}
+    >
+      {(
+        [
+          { value: "bn", label: "বাং" },
+          { value: "en", label: "EN" },
+        ] as const
+      ).map((option) => {
+        const selected = language === option.value;
+        return (
+          <Pressable
+            key={option.value}
+            accessibilityRole="radio"
+            accessibilityState={{ checked: selected }}
+            onPress={() => setLanguage(option.value)}
+            style={[
+              styles.segmentedControlOption,
+              selected && styles.segmentedControlOptionSelected,
+            ]}
+          >
+            <Text
+              style={[
+                styles.segmentedControlLangText,
+                selected && styles.segmentedControlTextSelected,
+              ]}
+            >
+              {option.label}
+            </Text>
+          </Pressable>
+        );
+      })}
     </View>
   );
 
   const renderSplash = () => (
     <Pressable
       onPress={() => {
-        setSignInMessage('');
-        setScreen('signin');
+        setSignInMessage("");
+        setScreen("signin");
       }}
       style={styles.fullScreenCard}
     >
       <Image
-        source={require('./assets/cwasa-logo.png')}
+        source={require("./assets/cwasa-logo.png")}
         style={styles.splashLogo}
         resizeMode="contain"
       />
       <Text style={[styles.heading, styles.splashTitle]}>Meter Reading</Text>
       <Text style={[styles.banglaTitle, styles.splashBangla]}>মিটার রিডিং</Text>
-      <View style={styles.waterAidRow}>
-      </View>
+      <View style={styles.waterAidRow}></View>
       <Text style={styles.tapText}>{translations.tapToContinue}</Text>
     </Pressable>
   );
@@ -1028,28 +1362,80 @@ export default function App() {
   const renderSignIn = () => (
     <ScrollView
       style={styles.screenShell}
-      contentContainerStyle={[styles.signInContent, isWeb && styles.webAuthFooterSpace]}
+      contentContainerStyle={[
+        styles.signInContent,
+        isWeb && styles.webAuthFooterSpace,
+      ]}
       keyboardShouldPersistTaps="handled"
     >
-      <View style={styles.topActions}>
-        <Pressable
-          onPress={() => setLanguage((current) => (current === 'en' ? 'bn' : 'en'))}
-          style={styles.langButton}
-        >
-          <Text style={styles.langButtonText}>{language === 'en' ? 'বাংলা | EN' : 'EN | বাংলা'}</Text>
-        </Pressable>
-      </View>
+      <View style={styles.topActions}>{renderLanguageToggle()}</View>
 
       <Image
-        source={require('./assets/cwasa-logo.png')}
+        source={require("./assets/cwasa-logo.png")}
         style={[styles.signInLogo, isShortScreen && styles.signInLogoCompact]}
         resizeMode="contain"
       />
-      <Text style={[styles.heading, styles.signInHeading, isShortScreen && styles.signInHeadingCompact]}>
+      <Text
+        style={[
+          styles.heading,
+          styles.signInHeading,
+          isShortScreen && styles.signInHeadingCompact,
+        ]}
+      >
         {translations.signIn}
       </Text>
 
-      <View style={[styles.fieldBlock, isShortScreen && styles.signInFieldBlockCompact]}>
+      <View
+        accessibilityLabel={translations.role}
+        accessibilityRole="radiogroup"
+        style={[styles.segmentedControl, styles.signInRoleControl]}
+      >
+        {(
+          [
+            { value: false, label: translations.inspectorRole },
+            { value: true, label: translations.adminRole },
+          ] as const
+        ).map((option) => {
+          const selected = adminSignInMode === option.value;
+          return (
+            <Pressable
+              key={option.label}
+              accessibilityRole="radio"
+              accessibilityState={{
+                checked: selected,
+                disabled: signInLoading,
+              }}
+              disabled={signInLoading}
+              onPress={() => {
+                setAdminSignInMode(option.value);
+                setMeterReaderId("");
+                setSignInPassword("");
+                setSignInMessage("");
+              }}
+              style={[
+                styles.segmentedControlOption,
+                selected && styles.segmentedControlOptionSelected,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.segmentedControlText,
+                  selected && styles.segmentedControlTextSelected,
+                ]}
+              >
+                {option.label}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+
+      <View
+        style={[
+          styles.fieldBlock,
+          isShortScreen && styles.signInFieldBlockCompact,
+        ]}
+      >
         <Text style={styles.labelText}>
           {adminSignInMode ? translations.adminUsername : translations.MID}
         </Text>
@@ -1057,28 +1443,37 @@ export default function App() {
           value={meterReaderId}
           onChangeText={(value) => {
             setMeterReaderId(value);
-            setSignInMessage('');
+            setSignInMessage("");
           }}
           autoCapitalize="none"
+          keyboardType={adminSignInMode ? "email-address" : "default"}
+          autoComplete={adminSignInMode ? "email" : "off"}
           style={styles.inputField}
         />
       </View>
 
-      <View style={[styles.fieldBlock, isShortScreen && styles.signInFieldBlockCompact]}>
+      <View
+        style={[
+          styles.fieldBlock,
+          isShortScreen && styles.signInFieldBlockCompact,
+        ]}
+      >
         <Text style={styles.labelText}>{translations.password}</Text>
         <View style={styles.passwordInputContainer}>
           <TextInput
             value={signInPassword}
             onChangeText={(value) => {
               setSignInPassword(value);
-              setSignInMessage('');
+              setSignInMessage("");
             }}
             secureTextEntry={!signInPasswordVisible}
             style={[styles.inputField, styles.passwordInput]}
           />
           <Pressable
             accessibilityLabel={
-              signInPasswordVisible ? translations.hidePassword : translations.showPassword
+              signInPasswordVisible
+                ? translations.hidePassword
+                : translations.showPassword
             }
             accessibilityRole="button"
             onPress={() => setSignInPasswordVisible((visible) => !visible)}
@@ -1087,7 +1482,9 @@ export default function App() {
           >
             <View style={styles.passwordEye}>
               <View style={styles.passwordEyePupil} />
-              {!signInPasswordVisible ? <View style={styles.passwordEyeSlash} /> : null}
+              {!signInPasswordVisible ? (
+                <View style={styles.passwordEyeSlash} />
+              ) : null}
             </View>
           </Pressable>
         </View>
@@ -1099,7 +1496,7 @@ export default function App() {
         </Text>
       ) : null}
 
-      <View style={styles.flexSpacer} />
+      <View />
 
       <Pressable
         disabled={signInLoading}
@@ -1110,28 +1507,13 @@ export default function App() {
           {signInLoading ? translations.signingIn : translations.signIn}
         </Text>
       </Pressable>
-      <Pressable
-        accessibilityRole="button"
-        disabled={signInLoading}
-        onPress={() => {
-          setAdminSignInMode((current) => !current);
-          setMeterReaderId('');
-          setSignInPassword('');
-          setSignInMessage('');
-        }}
-        style={{ alignItems: 'center', paddingVertical: 14 }}
-      >
-        <Text style={{ color: '#086f83', fontWeight: '600' }}>
-          {adminSignInMode ? translations.inspectorSignIn : translations.adminSignIn}
-        </Text>
-      </Pressable>
       {isWeb ? renderWebPageFooter() : null}
     </ScrollView>
   );
 
   const openProfile = () => {
     setDrawerOpen(false);
-    setScreen('profile');
+    setScreen("profile");
   };
 
   const goBack = () => {
@@ -1143,17 +1525,22 @@ export default function App() {
       return;
     }
     const fallbackScreens: Partial<Record<ScreenName, ScreenName>> = {
-      profile: 'list',
-      completed: 'list',
-      detail: 'list',
-      enter: 'detail',
-      review: 'enter',
-      saved: 'review',
-      newReading: 'list',
-      srnew: 'sr',
-      srdone: 'sr',
-      sr: 'list',
-      camera: cameraTarget === 'service' ? 'srnew' : cameraTarget === 'newReading' ? 'newReading' : 'detail',
+      profile: "list",
+      completed: "list",
+      detail: "list",
+      enter: "detail",
+      review: "enter",
+      saved: "review",
+      newReading: "list",
+      srnew: "sr",
+      srdone: "sr",
+      sr: "list",
+      camera:
+        cameraTarget === "service"
+          ? "srnew"
+          : cameraTarget === "newReading"
+            ? "newReading"
+            : "detail",
     };
     const fallback = fallbackScreens[screen];
     if (fallback) {
@@ -1163,44 +1550,64 @@ export default function App() {
   };
 
   const renderPageHeaderControls = () => (
-    <View style={[styles.pageHeaderControls, isWeb && styles.pageHeaderControlsWeb]}>
+    <View
+      style={[styles.pageHeaderControls, isWeb && styles.pageHeaderControlsWeb]}
+    >
       <Pressable
         accessibilityLabel={translations.moreOptions}
         accessibilityRole="button"
         onPress={() => setDrawerOpen(true)}
         style={[styles.pageHeaderButton, isWeb && styles.pageHeaderButtonWeb]}
       >
-        <Text style={[styles.pageHeaderButtonText, isWeb && styles.pageHeaderButtonTextWeb]}>☰</Text>
+        <Text
+          style={[
+            styles.pageHeaderButtonText,
+            isWeb && styles.pageHeaderButtonTextWeb,
+          ]}
+        >
+          ☰
+        </Text>
       </Pressable>
     </View>
   );
 
-  const renderPageBackButton = () => (
-    screen === 'list' ? null : (
+  const renderPageBackButton = () =>
+    screen === "list" ? null : (
       <Pressable
         accessibilityLabel={translations.back}
         accessibilityRole="button"
         onPress={goBack}
-        style={[styles.pageHeaderButton, isWeb && styles.pageHeaderButtonWeb]}
+        style={[
+          styles.pageHeaderButton,
+          styles.pageHeaderButtonRight,
+          isWeb && styles.pageHeaderButtonWeb,
+        ]}
       >
-        <Text style={[styles.pageHeaderButtonText, isWeb && styles.pageHeaderButtonTextWeb]}>←</Text>
+        <Text
+          style={[
+            styles.pageHeaderButtonText,
+            isWeb && styles.pageHeaderButtonTextWeb,
+          ]}
+        >
+          ←
+        </Text>
       </Pressable>
-    )
-  );
+    );
 
   const logOut = async () => {
     try {
       await clearStoredTokens();
       dispatch(clearAuthenticatedUser());
       setDrawerOpen(false);
-      setSignInMessage('');
+      setSignInMessage("");
       setAdminSignInMode(false);
-      setMeterReaderId('');
-      setSignInPassword('');
-      setScreen('splash');
+      setMeterReaderId("");
+      setSignInPassword("");
+      setScreen("splash");
     } catch (error) {
-      const message = error instanceof Error ? error.message : translations.logoutFailed;
-      if (Platform.OS === 'web') {
+      const message =
+        error instanceof Error ? error.message : translations.logoutFailed;
+      if (Platform.OS === "web") {
         window.alert(`${translations.logoutFailed} ${message}`);
       } else {
         Alert.alert(translations.logoutFailed, message);
@@ -1217,7 +1624,9 @@ export default function App() {
       />
       <View style={styles.accountDrawer}>
         <View style={styles.accountDrawerHeader}>
-          <View style={styles.accountAvatar}><Text style={styles.accountAvatarText}>{authAvatarInitial}</Text></View>
+          <View style={styles.accountAvatar}>
+            <Text style={styles.accountAvatarText}>{authAvatarInitial}</Text>
+          </View>
           <View style={styles.accountIdentity}>
             <Text style={styles.accountName}>{authDisplayName}</Text>
             <Text style={styles.accountMeta}>{authAccountMeta}</Text>
@@ -1230,60 +1639,79 @@ export default function App() {
             <Text style={styles.accountDrawerCloseText}>×</Text>
           </Pressable>
         </View>
-        <Text style={styles.accountDrawerSection}>{translations.workspace}</Text>
+        {authUser?.role !== "admin" ? (
+          <>
+            <Text style={styles.accountDrawerSection}>
+              {translations.workspace}
+            </Text>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => {
+                setDrawerOpen(false);
+                setReadingDashboardTab("pending");
+                if (screen === "list") {
+                  screenHistoryRef.current = [];
+                } else {
+                  isNavigatingToRootRef.current = true;
+                }
+                setScreen("list");
+              }}
+              style={styles.accountMenuItem}
+            >
+              <Text style={styles.accountMenuIcon}>◉</Text>
+              <Text style={styles.accountMenuText}>
+                {translations.meterReading}
+              </Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => {
+                setDrawerOpen(false);
+                if (screen === "newReading") {
+                  screenHistoryRef.current = [];
+                } else {
+                  isNavigatingToRootRef.current = true;
+                }
+                setScreen("newReading");
+              }}
+              style={styles.accountMenuItem}
+            >
+              <Text style={styles.accountMenuIcon}>◉</Text>
+              <Text style={styles.accountMenuText}>
+                {translations.newReading}
+              </Text>
+            </Pressable>
+            <View style={styles.accountMenuDivider} />
+          </>
+        ) : null}
         <Pressable
           accessibilityRole="button"
-          onPress={() => {
-            setDrawerOpen(false);
-            if (screen === 'list') {
-              screenHistoryRef.current = [];
-            } else {
-              isNavigatingToRootRef.current = true;
-            }
-            setScreen('list');
-          }}
+          onPress={openProfile}
           style={styles.accountMenuItem}
         >
-          <Text style={styles.accountMenuIcon}>◉</Text>
-          <Text style={styles.accountMenuText}>{translations.meterReading}</Text>
-        </Pressable>
-        <Pressable
-          accessibilityRole="button"
-          onPress={() => {
-            setDrawerOpen(false);
-            if (screen === 'sr') {
-              screenHistoryRef.current = [];
-            } else {
-              isNavigatingToRootRef.current = true;
-            }
-            setScreen('sr');
-          }}
-          style={styles.accountMenuItem}
-        >
-          <Text style={styles.accountMenuIcon}>▤</Text>
-          <Text style={styles.accountMenuText}>{translations.serviceRequest}</Text>
-        </Pressable>
-        <View style={styles.accountMenuDivider} />
-        <Pressable onPress={openProfile} style={styles.accountMenuItem}>
-          <Text style={styles.accountMenuIcon}>◉</Text>
+          <View style={styles.accountMenuProfileIcon}>
+            <View style={styles.accountMenuProfileHead} />
+            <View style={styles.accountMenuProfileBody} />
+          </View>
           <Text style={styles.accountMenuText}>{translations.profile}</Text>
           <Text style={styles.accountMenuChevron}>›</Text>
         </Pressable>
         <View style={styles.accountMenuDivider} />
         <View style={styles.accountLanguageRow}>
+          <Text style={styles.accountMenuIcon}>文</Text>
           <Text style={styles.accountMenuText}>{translations.language}</Text>
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => setLanguage((current) => (current === 'en' ? 'bn' : 'en'))}
-            style={styles.accountLanguageButton}
-          >
-            <Text style={styles.accountLanguageButtonText}>{language === 'en' ? 'বাংলা | EN' : 'EN | বাংলা'}</Text>
-          </Pressable>
+          {renderLanguageToggle(true)}
         </View>
-        <View style={styles.accountDrawerSpacer} />
-        <Pressable onPress={logOut} style={styles.accountMenuItem}>
-          <Text style={styles.accountMenuIconLogout}>↪</Text>
-          <Text style={styles.accountMenuLogoutText}>{translations.logOut}</Text>
+        <View />
+        <Pressable
+          accessibilityRole="button"
+          onPress={logOut}
+          style={styles.accountMenuItem}
+        >
+          <Text style={styles.accountMenuIconLogout}>⏻</Text>
+          <Text style={styles.accountMenuLogoutText}>
+            {translations.logOut}
+          </Text>
         </Pressable>
       </View>
     </View>
@@ -1292,37 +1720,48 @@ export default function App() {
   const renderProfile = () => {
     const profileContent = (
       <View style={styles.profileCard}>
-        <View style={styles.profileAvatar}><Text style={styles.profileAvatarText}>{authAvatarInitial}</Text></View>
+        <View style={styles.profileAvatar}>
+          <Text style={styles.profileAvatarText}>{authAvatarInitial}</Text>
+        </View>
         <Text style={styles.profileName}>{authDisplayName}</Text>
         <Text style={styles.profileMeta}>{authAccountMeta}</Text>
-        {profileStatus === 'loading' ? (
+        {profileStatus === "loading" ? (
           <Text style={styles.profileMeta}>{translations.profileLoading}</Text>
         ) : null}
-        {profileError?.type === 'connection' ? (
+        {profileError?.type === "connection" ? (
           <Text accessibilityRole="alert" style={styles.signInMessage}>
             {translations.profileConnectionFailed}
           </Text>
         ) : null}
-        {profileError?.type === 'request' ? (
+        {profileError?.type === "request" ? (
           <Text accessibilityRole="alert" style={styles.signInMessage}>
             {translations.profileRequestFailed} (HTTP {profileError.status})
           </Text>
         ) : null}
-        {profileError?.type === 'invalid' ? (
+        {profileError?.type === "invalid" ? (
           <Text accessibilityRole="alert" style={styles.signInMessage}>
             {translations.profileInvalidResponse}
           </Text>
         ) : null}
-        {profileError?.type === 'unexpected' ? (
+        {profileError?.type === "unexpected" ? (
           <Text accessibilityRole="alert" style={styles.signInMessage}>
             {profileError.message}
           </Text>
         ) : null}
         <View style={styles.profileFields}>
           {[
-            [translations.employeeName, authUser?.name || translations.notProvided],
-            [translations.meterReaderCode, authUser?.readerCode || translations.notProvided],
-            [translations.meterReaderId, authUser?.meterReaderId || translations.notProvided],
+            [
+              translations.employeeName,
+              authUser?.name || translations.notProvided,
+            ],
+            [
+              translations.meterReaderCode,
+              authUser?.readerCode || translations.notProvided,
+            ],
+            [
+              translations.meterReaderId,
+              authUser?.meterReaderId || translations.notProvided,
+            ],
             [translations.role, authUser?.role || translations.notProvided],
             [translations.userId, authUser?.id || translations.notProvided],
           ].map(([label, value]) => (
@@ -1339,7 +1778,12 @@ export default function App() {
       return (
         <View style={styles.webDashboard}>
           <View style={styles.webMain}>
-            <View style={[styles.webTopBar, isCompactWeb && styles.webTopBarCompact]}>
+            <View
+              style={[
+                styles.webTopBar,
+                isCompactWeb && styles.webTopBarCompact,
+              ]}
+            >
               {renderPageHeaderControls()}
               <View>
                 <Text style={styles.webBreadcrumb}>ACCOUNT</Text>
@@ -1347,7 +1791,13 @@ export default function App() {
               </View>
               {renderPageBackButton()}
             </View>
-            <ScrollView style={styles.profileScroll} contentContainerStyle={[styles.profilePageContent, styles.webPageFooterSpace]}>
+            <ScrollView
+              style={styles.profileScroll}
+              contentContainerStyle={[
+                styles.profilePageContent,
+                styles.webPageFooterSpace,
+              ]}
+            >
               {profileContent}
               {renderWebPageFooter()}
             </ScrollView>
@@ -1363,7 +1813,10 @@ export default function App() {
           <Text style={[styles.heading, styles.topBarTitle]}>Profile</Text>
           {renderPageBackButton()}
         </View>
-        <ScrollView style={styles.profileScroll} contentContainerStyle={styles.profilePageContent}>
+        <ScrollView
+          style={styles.profileScroll}
+          contentContainerStyle={styles.profilePageContent}
+        >
           {profileContent}
         </ScrollView>
       </View>
@@ -1374,7 +1827,9 @@ export default function App() {
     <View style={styles.screenShellDark}>
       <View style={styles.topBar}>
         {renderPageHeaderControls()}
-        <Text style={[styles.heading, styles.topBarTitle]}>{translations.meterReading}</Text>
+        <Text style={[styles.heading, styles.topBarTitle]}>
+          {translations.meterReading}
+        </Text>
         {renderPageBackButton()}
         <View style={styles.topBarIcons}>
           <Text style={styles.iconText}>⌕</Text>
@@ -1383,11 +1838,37 @@ export default function App() {
       </View>
 
       <View style={styles.tabRow}>
-        <Pressable onPress={() => setScreen('list')} style={screen === 'list' ? styles.tabItemActive : styles.tabItemInactive}>
-          <Text style={screen === 'list' ? styles.tabTextActive : styles.tabTextInactive}>{translations.pendingReadings} {assignedCustomers.length}</Text>
+        <Pressable
+          onPress={() => setScreen("list")}
+          style={
+            screen === "list" ? styles.tabItemActive : styles.tabItemInactive
+          }
+        >
+          <Text
+            style={
+              screen === "list" ? styles.tabTextActive : styles.tabTextInactive
+            }
+          >
+            {translations.pendingReadings} {assignedCustomers.length}
+          </Text>
         </Pressable>
-        <Pressable onPress={() => setScreen('completed')} style={screen === 'completed' ? styles.tabItemActive : styles.tabItemInactive}>
-          <Text style={screen === 'completed' ? styles.tabTextActive : styles.tabTextInactive}>{translations.completedReadings} {completedReadings.length}</Text>
+        <Pressable
+          onPress={() => setScreen("completed")}
+          style={
+            screen === "completed"
+              ? styles.tabItemActive
+              : styles.tabItemInactive
+          }
+        >
+          <Text
+            style={
+              screen === "completed"
+                ? styles.tabTextActive
+                : styles.tabTextInactive
+            }
+          >
+            {translations.completedReadings} {completedReadings.length}
+          </Text>
         </Pressable>
       </View>
 
@@ -1407,36 +1888,65 @@ export default function App() {
           accessibilityState={{ expanded: readingFilterOpen }}
           onPress={() => {
             if (!readingFilterOpen) setDraftWardFilter(wardFilter);
-            if (!readingFilterOpen) setDraftBillApprovalFilter(billApprovalFilter);
+            if (!readingFilterOpen)
+              setDraftBillApprovalFilter(billApprovalFilter);
             setWardOptionOpen(false);
             setReadingFilterOpen((open) => !open);
           }}
-          style={[styles.filterTriggerButton, wardFilter !== 'all' && styles.filterTriggerButtonActive]}
+          style={[
+            styles.filterTriggerButton,
+            wardFilter !== "all" && styles.filterTriggerButtonActive,
+          ]}
         >
-          <Text style={[styles.filterTriggerText, wardFilter !== 'all' && styles.filterTriggerTextActive]}>
-            {translations.filter}{activeReadingFilterCount > 0 ? ` · ${activeReadingFilterCount}` : ''}
+          <Text
+            style={[
+              styles.filterTriggerText,
+              wardFilter !== "all" && styles.filterTriggerTextActive,
+            ]}
+          >
+            {translations.filter}
+            {activeReadingFilterCount > 0
+              ? ` · ${activeReadingFilterCount}`
+              : ""}
           </Text>
         </Pressable>
       </View>
       {renderReadingFilterPanel()}
 
-      <ScrollView style={styles.customerList} contentContainerStyle={styles.customerListContent}>
+      <ScrollView
+        style={styles.customerList}
+        contentContainerStyle={styles.customerListContent}
+      >
         {assignedCustomersLoading ? (
           <View style={styles.emptyFilteredBox}>
-            <Text style={styles.emptyFilteredTitle}>{translations.loadingSubmittedReadings}</Text>
+            <Text style={styles.emptyFilteredTitle}>
+              {translations.loadingSubmittedReadings}
+            </Text>
           </View>
         ) : assignedCustomersError ? (
           <View style={styles.emptyFilteredBox}>
-            <Text accessibilityRole="alert" style={styles.emptyFilteredTitle}>{assignedCustomersError}</Text>
-            <Pressable onPress={() => setAssignedCustomersRefreshKey((value) => value + 1)} style={styles.emptyFilteredResetBtn}>
-              <Text style={styles.emptyFilteredResetBtnText}>{translations.retry}</Text>
+            <Text accessibilityRole="alert" style={styles.emptyFilteredTitle}>
+              {assignedCustomersError}
+            </Text>
+            <Pressable
+              onPress={() =>
+                setAssignedCustomersRefreshKey((value) => value + 1)
+              }
+              style={styles.emptyFilteredResetBtn}
+            >
+              <Text style={styles.emptyFilteredResetBtnText}>
+                {translations.retry}
+              </Text>
             </Pressable>
           </View>
         ) : filteredCustomers.length === 0 ? (
           <View style={styles.emptyFilteredBox}>
             <Text style={styles.emptyFilteredIcon}>📋</Text>
             <Text style={styles.emptyFilteredTitle}>
-              {getReadingEmptyMessage(assignedCustomers.length, translations.noPendingReadings)}
+              {getReadingEmptyMessage(
+                assignedCustomers.length,
+                translations.noPendingReadings,
+              )}
             </Text>
           </View>
         ) : (
@@ -1445,26 +1955,45 @@ export default function App() {
               key={customer.id}
               onPress={() => {
                 setSelectedCustomer(customer);
-                setScreen('detail');
+                setScreen("detail");
               }}
               style={styles.customerCard}
             >
-              {customer.flag ? <Text style={styles.complaintBadge}>⚑ {translations.complaint}</Text> : null}
+              {customer.flag ? (
+                <Text style={styles.complaintBadge}>
+                  ⚑ {translations.complaint}
+                </Text>
+              ) : null}
               <View style={styles.customerCardRow}>
                 <View style={styles.customerDetails}>
                   <View style={styles.customerNameRow}>
                     <Text style={styles.customerName}>{customer.name}</Text>
                     <View style={styles.badgeApprovalReq}>
-                      <Text style={styles.badgeApprovalReqText}>{translations.awaitingAdminReview}</Text>
+                      <Text style={styles.badgeApprovalReqText}>
+                        {translations.awaitingAdminReview}
+                      </Text>
                     </View>
                   </View>
                   <Text style={styles.customerAddress}>{customer.addr}</Text>
-                  <Text style={styles.customerMeta}>{translations.account} {customer.acc} · {translations.meter} {customer.meter}</Text>
-                  {customer.wardNo ? <Text style={styles.customerMeta}>{translations.ward} {customer.wardNo}</Text> : null}
+                  <Text style={styles.customerMeta}>
+                    {translations.account} {customer.acc} · {translations.meter}{" "}
+                    {customer.meter}
+                  </Text>
+                  {customer.wardNo ? (
+                    <Text style={styles.customerMeta}>
+                      {translations.ward} {customer.wardNo}
+                    </Text>
+                  ) : null}
                 </View>
                 <View style={styles.customerRightColumn}>
-                  <Text style={[styles.customerAmount, { color: customer.color }]}>{customer.amt}</Text>
-                  <Text style={styles.customerDueLabel}>{translations.pending}</Text>
+                  <Text
+                    style={[styles.customerAmount, { color: customer.color }]}
+                  >
+                    {customer.amt}
+                  </Text>
+                  <Text style={styles.customerDueLabel}>
+                    {translations.pending}
+                  </Text>
                 </View>
               </View>
             </Pressable>
@@ -1478,7 +2007,7 @@ export default function App() {
         accessibilityRole="button"
         onPress={() => {
           resetNewReadingForm();
-          setScreen('newReading');
+          setScreen("newReading");
         }}
         style={styles.floatingActionButton}
       >
@@ -1490,7 +2019,7 @@ export default function App() {
           <Text style={styles.navIcon}>◉</Text>
           <Text style={styles.navLabelActive}>{translations.meterReading}</Text>
         </View>
-        <Pressable onPress={() => setScreen('sr')} style={styles.bottomNavItem}>
+        <Pressable onPress={() => setScreen("sr")} style={styles.bottomNavItem}>
           <Text style={styles.navIcon}>▤</Text>
           <Text style={styles.navLabel}>{translations.serviceRequest}</Text>
         </Pressable>
@@ -1499,26 +2028,28 @@ export default function App() {
   );
 
   const openCreateServiceRequest = () => {
-    setServiceAccount('');
+    setServiceAccount("");
     setServiceCustomer(null);
-    setServiceCustomerError('');
-    setServiceDescription('');
+    setServiceCustomerError("");
+    setServiceDescription("");
     setServiceProblem(SERVICE_PROBLEMS[0]);
     setServicePhoto(null);
-    setServiceRequestError('');
+    setServiceRequestError("");
     setCreatedServiceRequest(null);
-    setScreen('srnew');
+    setScreen("srnew");
   };
 
   const findServiceRequestCustomer = async () => {
     const identifier = serviceAccount.trim();
     if (!identifier) {
-      setServiceCustomerError(translations.serviceRequestCustomerNumberRequired);
+      setServiceCustomerError(
+        translations.serviceRequestCustomerNumberRequired,
+      );
       setServiceCustomer(null);
       return;
     }
     setServiceCustomerLoading(true);
-    setServiceCustomerError('');
+    setServiceCustomerError("");
     setServiceCustomer(null);
     try {
       const customer = await lookupServiceRequestCustomer(identifier);
@@ -1526,18 +2057,21 @@ export default function App() {
     } catch (error) {
       setServiceCustomerError(
         error instanceof ApiRequestError &&
-        error.status === 404 &&
-        error.responseMessage?.includes('No customer matches')
+          error.status === 404 &&
+          error.responseMessage?.includes("No customer matches")
           ? translations.serviceRequestCustomerNotFound
           : error instanceof ApiRequestError && error.status === 401
             ? translations.serviceRequestAuthFailed
             : error instanceof ApiRequestError && error.status === 403
               ? translations.serviceRequestForbidden
               : error instanceof ApiRequestError
-                ? translations.serviceRequestLookupHttpFailed.replace('{status}', String(error.status))
+                ? translations.serviceRequestLookupHttpFailed.replace(
+                    "{status}",
+                    String(error.status),
+                  )
                 : error instanceof ApiConnectionError
                   ? translations.serviceRequestConnectionFailed
-          : translations.serviceRequestCustomerLookupFailed,
+                  : translations.serviceRequestCustomerLookupFailed,
       );
     } finally {
       setServiceCustomerLoading(false);
@@ -1545,7 +2079,7 @@ export default function App() {
   };
 
   const submitServiceRequest = async () => {
-    setServiceRequestError('');
+    setServiceRequestError("");
     if (!serviceAccount.trim()) {
       setServiceRequestError(translations.serviceRequestNumberRequired);
       return;
@@ -1564,24 +2098,32 @@ export default function App() {
       let photoBase64: string | undefined;
       if (servicePhoto) {
         try {
-          const resizeTo = Math.min(1280, Math.max(servicePhoto.width, servicePhoto.height));
-          const dimensions = servicePhoto.width >= servicePhoto.height
-            ? { width: resizeTo }
-            : { height: resizeTo };
+          const resizeTo = Math.min(
+            1280,
+            Math.max(servicePhoto.width, servicePhoto.height),
+          );
+          const dimensions =
+            servicePhoto.width >= servicePhoto.height
+              ? { width: resizeTo }
+              : { height: resizeTo };
           const compressed = await ImageManipulator.manipulate(servicePhoto.uri)
             .resize(dimensions)
             .renderAsync()
-            .then((image) => image.saveAsync({
-              base64: true,
-              compress: 0.65,
-              format: SaveFormat.JPEG,
-            }));
+            .then((image) =>
+              image.saveAsync({
+                base64: true,
+                compress: 0.65,
+                format: SaveFormat.JPEG,
+              }),
+            );
           if (!compressed.base64) {
-            throw new Error('Image compression did not produce image data.');
+            throw new Error("Image compression did not produce image data.");
           }
           photoBase64 = compressed.base64;
         } catch {
-          setServiceRequestError(translations.serviceRequestPhotoCompressionFailed);
+          setServiceRequestError(
+            translations.serviceRequestPhotoCompressionFailed,
+          );
           return;
         }
       }
@@ -1592,8 +2134,8 @@ export default function App() {
         ...(photoBase64 ? { photoBase64 } : {}),
       });
       setCreatedServiceRequest(request);
-      setServiceRequestFilter('all');
-      setScreen('srdone');
+      setServiceRequestFilter("all");
+      setScreen("srdone");
     } catch (error) {
       setServiceRequestError(
         error instanceof ApiRequestError && error.status === 404
@@ -1609,14 +2151,19 @@ export default function App() {
     }
   };
 
-  const filteredServiceRequests = serviceRequestFilter === 'all'
-    ? serviceRequests
-    : serviceRequests.filter((request) => request.status === serviceRequestFilter);
+  const filteredServiceRequests =
+    serviceRequestFilter === "all"
+      ? serviceRequests
+      : serviceRequests.filter(
+          (request) => request.status === serviceRequestFilter,
+        );
 
-  const getServiceRequestFilterLabel = (filter: typeof SERVICE_REQUEST_FILTERS[number]) => {
-    if (filter === 'all') return translations.allServiceRequests;
-    if (filter === 'Pending') return translations.pendingServiceRequests;
-    if (filter === 'In progress') return translations.inProgressServiceRequests;
+  const getServiceRequestFilterLabel = (
+    filter: (typeof SERVICE_REQUEST_FILTERS)[number],
+  ) => {
+    if (filter === "all") return translations.allServiceRequests;
+    if (filter === "Pending") return translations.pendingServiceRequests;
+    if (filter === "In progress") return translations.inProgressServiceRequests;
     return translations.completedServiceRequests;
   };
 
@@ -1641,7 +2188,9 @@ export default function App() {
           onPress={closeServiceRequestFilter}
           style={styles.filterModalScrim}
         />
-        <View style={[styles.filterModalCard, isWeb && styles.filterModalCardWeb]}>
+        <View
+          style={[styles.filterModalCard, isWeb && styles.filterModalCardWeb]}
+        >
           <View style={styles.filterModalHeader}>
             <Text style={styles.filterModalTitle}>{translations.filter}</Text>
             <Pressable
@@ -1662,13 +2211,26 @@ export default function App() {
                   accessibilityRole="button"
                   accessibilityState={{ selected }}
                   onPress={() => setDraftServiceRequestFilter(filter)}
-                  style={[styles.filterOptionItem, selected && styles.filterOptionItemActive]}
+                  style={[
+                    styles.filterOptionItem,
+                    selected && styles.filterOptionItemActive,
+                  ]}
                 >
                   <View style={styles.filterOptionLeft}>
-                    <View style={[styles.filterRadioCircle, selected && styles.filterRadioCircleActive]}>
+                    <View
+                      style={[
+                        styles.filterRadioCircle,
+                        selected && styles.filterRadioCircleActive,
+                      ]}
+                    >
                       {selected ? <View style={styles.filterRadioDot} /> : null}
                     </View>
-                    <Text style={[styles.filterOptionLabel, selected && styles.filterOptionLabelActive]}>
+                    <Text
+                      style={[
+                        styles.filterOptionLabel,
+                        selected && styles.filterOptionLabelActive,
+                      ]}
+                    >
                       {getServiceRequestFilterLabel(filter)}
                     </Text>
                   </View>
@@ -1680,12 +2242,14 @@ export default function App() {
             <Pressable
               accessibilityRole="button"
               onPress={() => {
-                setDraftServiceRequestFilter('all');
-                setServiceRequestFilter('all');
+                setDraftServiceRequestFilter("all");
+                setServiceRequestFilter("all");
               }}
               style={styles.filterResetButton}
             >
-              <Text style={styles.filterResetButtonText}>{translations.reset}</Text>
+              <Text style={styles.filterResetButtonText}>
+                {translations.reset}
+              </Text>
             </Pressable>
             <Pressable
               accessibilityRole="button"
@@ -1695,7 +2259,9 @@ export default function App() {
               }}
               style={styles.filterApplyButton}
             >
-              <Text style={styles.filterApplyButtonText}>{translations.apply}</Text>
+              <Text style={styles.filterApplyButtonText}>
+                {translations.apply}
+              </Text>
             </Pressable>
           </View>
         </View>
@@ -1704,22 +2270,27 @@ export default function App() {
   );
 
   const getServiceRequestStatusLabel = (status: ServiceRequestStatus) => {
-    if (status === 'Pending') return translations.serviceStatusPending;
-    if (status === 'In progress') return translations.serviceStatusInProgress;
+    if (status === "Pending") return translations.serviceStatusPending;
+    if (status === "In progress") return translations.serviceStatusInProgress;
     return translations.serviceStatusCompleted;
   };
 
   const getServiceProblemLabel = (problem: string) => {
-    if (problem === 'Meter defective') return translations.serviceProblemMeterDefective;
-    if (problem === 'Meter stopped') return translations.serviceProblemMeterStopped;
-    if (problem === 'Glass broken') return translations.serviceProblemGlassBroken;
+    if (problem === "Meter defective")
+      return translations.serviceProblemMeterDefective;
+    if (problem === "Meter stopped")
+      return translations.serviceProblemMeterStopped;
+    if (problem === "Glass broken")
+      return translations.serviceProblemGlassBroken;
     return translations.serviceProblemOther;
   };
 
   const renderServiceRequestsEmptyState = () => (
     <View style={styles.serviceRequestEmptyState}>
       <Text style={styles.serviceRequestEmptyIcon}>▤</Text>
-      <Text style={styles.serviceRequestEmptyText}>{translations.noServiceRequests}</Text>
+      <Text style={styles.serviceRequestEmptyText}>
+        {translations.noServiceRequests}
+      </Text>
     </View>
   );
 
@@ -1727,7 +2298,9 @@ export default function App() {
     <View style={styles.screenShellDark}>
       <View style={styles.topBar}>
         {renderPageHeaderControls()}
-        <Text style={[styles.heading, styles.topBarTitle]}>{translations.serviceRequest}</Text>
+        <Text style={[styles.heading, styles.topBarTitle]}>
+          {translations.serviceRequest}
+        </Text>
         {renderPageBackButton()}
       </View>
       {renderServiceRequestFilterModal()}
@@ -1736,44 +2309,84 @@ export default function App() {
           accessibilityRole="button"
           accessibilityState={{ expanded: serviceRequestFilterOpen }}
           onPress={openServiceRequestFilter}
-          style={[styles.filterTriggerButton, serviceRequestFilter !== 'all' && styles.filterTriggerButtonActive]}
+          style={[
+            styles.filterTriggerButton,
+            serviceRequestFilter !== "all" && styles.filterTriggerButtonActive,
+          ]}
         >
-          <Text style={[styles.filterTriggerText, serviceRequestFilter !== 'all' && styles.filterTriggerTextActive]}>
-            {translations.filter}{serviceRequestFilter !== 'all' ? ' · 1' : ''}
+          <Text
+            style={[
+              styles.filterTriggerText,
+              serviceRequestFilter !== "all" && styles.filterTriggerTextActive,
+            ]}
+          >
+            {translations.filter}
+            {serviceRequestFilter !== "all" ? " · 1" : ""}
           </Text>
         </Pressable>
       </View>
-      <ScrollView style={styles.customerList} contentContainerStyle={styles.customerListContent}>
+      <ScrollView
+        style={styles.customerList}
+        contentContainerStyle={styles.customerListContent}
+      >
         {serviceRequestsLoading ? (
-          <Text style={styles.customerAddress}>{translations.serviceRequestLoading}</Text>
+          <Text style={styles.customerAddress}>
+            {translations.serviceRequestLoading}
+          </Text>
         ) : serviceRequestsError ? (
           <View style={styles.emptyFilteredBox}>
-            <Text accessibilityRole="alert" style={styles.emptyFilteredTitle}>{serviceRequestsError}</Text>
-            <Pressable onPress={() => setServiceRequestsRefreshKey((key) => key + 1)} style={styles.emptyFilteredResetBtn}>
+            <Text accessibilityRole="alert" style={styles.emptyFilteredTitle}>
+              {serviceRequestsError}
+            </Text>
+            <Pressable
+              onPress={() => setServiceRequestsRefreshKey((key) => key + 1)}
+              style={styles.emptyFilteredResetBtn}
+            >
               <Text style={styles.emptyFilteredResetBtnText}>Retry</Text>
             </Pressable>
           </View>
         ) : filteredServiceRequests.length === 0 ? (
           renderServiceRequestsEmptyState()
-        ) : filteredServiceRequests.map((request) => (
-          <View key={request.id} style={styles.customerCard}>
-            <Text style={styles.customerName}>{request.customerName}</Text>
-            <Text style={styles.customerAddress}>{request.accountNo}{request.meterNo ? ` · ${request.meterNo}` : ''}</Text>
-            <Text style={styles.serviceProblemText}>⚠ {getServiceProblemLabel(request.problemType)}</Text>
-            <Text style={styles.customerAddress}>{request.description}</Text>
-            <Text style={styles.servicePendingBadge}>{getServiceRequestStatusLabel(request.status)}</Text>
-            <Text style={styles.customerAddress}>
-              {new Date(request.createdAt).toLocaleString(translations.serviceRequestDateLocale)}
-            </Text>
-          </View>
-        ))}
+        ) : (
+          filteredServiceRequests.map((request) => (
+            <View key={request.id} style={styles.customerCard}>
+              <Text style={styles.customerName}>{request.customerName}</Text>
+              <Text style={styles.customerAddress}>
+                {request.accountNo}
+                {request.meterNo ? ` · ${request.meterNo}` : ""}
+              </Text>
+              <Text style={styles.serviceProblemText}>
+                ⚠ {getServiceProblemLabel(request.problemType)}
+              </Text>
+              <Text style={styles.customerAddress}>{request.description}</Text>
+              <Text style={styles.servicePendingBadge}>
+                {getServiceRequestStatusLabel(request.status)}
+              </Text>
+              <Text style={styles.customerAddress}>
+                {new Date(request.createdAt).toLocaleString(
+                  translations.serviceRequestDateLocale,
+                )}
+              </Text>
+            </View>
+          ))
+        )}
       </ScrollView>
       <View style={styles.serviceRequestFooter}>
-        <Pressable onPress={() => setScreen('list')} style={styles.secondaryFooterButton}>
-          <Text style={styles.secondaryFooterText}>{translations.meterReading}</Text>
+        <Pressable
+          onPress={() => setScreen("list")}
+          style={styles.secondaryFooterButton}
+        >
+          <Text style={styles.secondaryFooterText}>
+            {translations.meterReading}
+          </Text>
         </Pressable>
-        <Pressable onPress={openCreateServiceRequest} style={styles.primaryButton}>
-          <Text style={styles.primaryButtonText}>＋  {translations.createServiceRequest}</Text>
+        <Pressable
+          onPress={openCreateServiceRequest}
+          style={styles.primaryButton}
+        >
+          <Text style={styles.primaryButtonText}>
+            ＋ {translations.createServiceRequest}
+          </Text>
         </Pressable>
       </View>
     </View>
@@ -1783,18 +2396,25 @@ export default function App() {
     <View style={styles.screenShellDark}>
       <View style={styles.topBar}>
         {renderPageHeaderControls()}
-        <Text style={[styles.heading, styles.topBarTitle]}>{translations.createServiceRequest}</Text>
+        <Text style={[styles.heading, styles.topBarTitle]}>
+          {translations.createServiceRequest}
+        </Text>
         {renderPageBackButton()}
       </View>
-      <ScrollView style={styles.serviceFormScroll} contentContainerStyle={styles.serviceFormContent}>
+      <ScrollView
+        style={styles.serviceFormScroll}
+        contentContainerStyle={styles.serviceFormContent}
+      >
         <View style={styles.fieldBlock}>
-          <Text style={styles.labelText}>{translations.serviceRequestCustomerNumber} *</Text>
+          <Text style={styles.labelText}>
+            {translations.serviceRequestCustomerNumber} *
+          </Text>
           <TextInput
             value={serviceAccount}
             onChangeText={(value) => {
               setServiceAccount(value);
               setServiceCustomer(null);
-              setServiceCustomerError('');
+              setServiceCustomerError("");
             }}
             autoCapitalize="characters"
             style={styles.inputField}
@@ -1805,90 +2425,148 @@ export default function App() {
             style={styles.secondaryFooterButton}
           >
             <Text style={styles.secondaryFooterText}>
-              {serviceCustomerLoading ? translations.findingCustomer : translations.findCustomer}
+              {serviceCustomerLoading
+                ? translations.findingCustomer
+                : translations.findCustomer}
             </Text>
           </Pressable>
           {serviceCustomerError ? (
-            <Text accessibilityRole="alert" style={styles.readingError}>{serviceCustomerError}</Text>
+            <Text accessibilityRole="alert" style={styles.readingError}>
+              {serviceCustomerError}
+            </Text>
           ) : null}
         </View>
         {serviceCustomer ? (
           <View style={styles.serviceCustomerNotice}>
-            <Text style={styles.serviceNoticeTitle}>{serviceCustomer.customerName}</Text>
-            <Text style={styles.customerAddress}>{serviceCustomer.address}</Text>
+            <Text style={styles.serviceNoticeTitle}>
+              {serviceCustomer.customerName}
+            </Text>
             <Text style={styles.customerAddress}>
-              {translations.serviceRequestCustomerAccount} {serviceCustomer.accountNo}{serviceCustomer.meterNo ? ` · ${translations.serviceRequestCustomerMeter} ${serviceCustomer.meterNo}` : ''}
+              {serviceCustomer.address}
+            </Text>
+            <Text style={styles.customerAddress}>
+              {translations.serviceRequestCustomerAccount}{" "}
+              {serviceCustomer.accountNo}
+              {serviceCustomer.meterNo
+                ? ` · ${translations.serviceRequestCustomerMeter} ${serviceCustomer.meterNo}`
+                : ""}
             </Text>
           </View>
         ) : null}
         <View style={styles.fieldBlock}>
-          <Text style={styles.labelText}>{translations.serviceRequestProblemType}</Text>
-          <Pressable onPress={() => setProblemMenuOpen((open) => !open)} style={styles.problemSelect}>
-            <Text style={styles.problemSelectText}>{getServiceProblemLabel(serviceProblem)}</Text>
-            <Text style={styles.problemSelectText}>{problemMenuOpen ? '▴' : '▾'}</Text>
+          <Text style={styles.labelText}>
+            {translations.serviceRequestProblemType}
+          </Text>
+          <Pressable
+            onPress={() => setProblemMenuOpen((open) => !open)}
+            style={styles.problemSelect}
+          >
+            <Text style={styles.problemSelectText}>
+              {getServiceProblemLabel(serviceProblem)}
+            </Text>
+            <Text style={styles.problemSelectText}>
+              {problemMenuOpen ? "▴" : "▾"}
+            </Text>
           </Pressable>
-          {problemMenuOpen ? SERVICE_PROBLEMS.map((problem) => (
-            <Pressable
-              key={problem}
-              onPress={() => {
-                setServiceProblem(problem);
-                setProblemMenuOpen(false);
-              }}
-              style={styles.problemOption}
-            >
-              <Text style={styles.problemOptionText}>{getServiceProblemLabel(problem)}</Text>
-            </Pressable>
-          )) : null}
+          {problemMenuOpen
+            ? SERVICE_PROBLEMS.map((problem) => (
+                <Pressable
+                  key={problem}
+                  onPress={() => {
+                    setServiceProblem(problem);
+                    setProblemMenuOpen(false);
+                  }}
+                  style={styles.problemOption}
+                >
+                  <Text style={styles.problemOptionText}>
+                    {getServiceProblemLabel(problem)}
+                  </Text>
+                </Pressable>
+              ))
+            : null}
         </View>
         <View style={styles.fieldBlock}>
-          <Text style={styles.labelText}>{translations.serviceRequestPhoto} <Text style={styles.optionalLabel}>· {translations.optional}</Text></Text>
+          <Text style={styles.labelText}>
+            {translations.serviceRequestPhoto}{" "}
+            <Text style={styles.optionalLabel}>· {translations.optional}</Text>
+          </Text>
           {servicePhoto ? (
             <View style={styles.newReadingPhotoPreviewWrapper}>
-              <Image source={{ uri: servicePhoto.uri }} style={styles.newReadingPhotoPreview} resizeMode="cover" />
+              <Image
+                source={{ uri: servicePhoto.uri }}
+                style={styles.newReadingPhotoPreview}
+                resizeMode="cover"
+              />
               <View style={styles.newReadingPhotoOverlay}>
-                <Pressable onPress={() => setServicePhoto(null)} style={styles.newReadingRetakeBtn}>
-                  <Text style={styles.newReadingRetakeBtnText}>✕ {translations.removePhoto}</Text>
+                <Pressable
+                  onPress={() => setServicePhoto(null)}
+                  style={styles.newReadingRetakeBtn}
+                >
+                  <Text style={styles.newReadingRetakeBtnText}>
+                    ✕ {translations.removePhoto}
+                  </Text>
                 </Pressable>
               </View>
             </View>
           ) : (
             <View style={styles.photoActionRow}>
-              <Pressable onPress={openServiceCamera} style={styles.photoActionPrimary}>
-                <Text style={styles.photoActionPrimaryText}>◉  {translations.serviceTakePhoto}</Text>
+              <Pressable
+                onPress={openServiceCamera}
+                style={styles.photoActionPrimary}
+              >
+                <Text style={styles.photoActionPrimaryText}>
+                  ◉ {translations.serviceTakePhoto}
+                </Text>
               </Pressable>
-              <Pressable onPress={pickServiceImageFromGallery} style={styles.photoActionSecondary}>
-                <Text style={styles.photoActionSecondaryText}>{translations.chooseFromGallery}</Text>
+              <Pressable
+                onPress={pickServiceImageFromGallery}
+                style={styles.photoActionSecondary}
+              >
+                <Text style={styles.photoActionSecondaryText}>
+                  {translations.chooseFromGallery}
+                </Text>
               </Pressable>
             </View>
           )}
         </View>
         <View style={styles.fieldBlock}>
-          <Text style={styles.labelText}>{translations.serviceRequestDescription} *</Text>
+          <Text style={styles.labelText}>
+            {translations.serviceRequestDescription} *
+          </Text>
           <TextInput
             value={serviceDescription}
             onChangeText={(value) => {
               setServiceDescription(value);
-              setServiceRequestError('');
+              setServiceRequestError("");
             }}
             multiline
             maxLength={500}
             placeholder={translations.describeProblem}
             style={styles.descriptionInput}
           />
-          <Text style={styles.characterCount}>{serviceDescription.length} / 500</Text>
+          <Text style={styles.characterCount}>
+            {serviceDescription.length} / 500
+          </Text>
         </View>
       </ScrollView>
       <View style={styles.serviceRequestFooter}>
         {serviceRequestError ? (
-          <Text accessibilityRole="alert" style={styles.readingError}>{serviceRequestError}</Text>
+          <Text accessibilityRole="alert" style={styles.readingError}>
+            {serviceRequestError}
+          </Text>
         ) : null}
         <Pressable
           disabled={serviceRequestSubmitting}
           onPress={() => void submitServiceRequest()}
-          style={[styles.primaryButton, serviceRequestSubmitting && styles.readingDisabledButton]}
+          style={[
+            styles.primaryButton,
+            serviceRequestSubmitting && styles.readingDisabledButton,
+          ]}
         >
           <Text style={styles.primaryButtonText}>
-            {serviceRequestSubmitting ? translations.submittingServiceRequest : translations.createRequest}
+            {serviceRequestSubmitting
+              ? translations.submittingServiceRequest
+              : translations.createRequest}
           </Text>
         </Pressable>
       </View>
@@ -1899,27 +2577,48 @@ export default function App() {
     <View style={styles.screenShellDark}>
       <View style={styles.topBar}>
         {renderPageHeaderControls()}
-        <Text style={[styles.heading, styles.topBarTitle]}>{translations.serviceRequestSubmitted}</Text>
+        <Text style={[styles.heading, styles.topBarTitle]}>
+          {translations.serviceRequestSubmitted}
+        </Text>
         {renderPageBackButton()}
       </View>
       <View style={styles.serviceSubmittedContent}>
-        <View style={styles.serviceSuccessIcon}><Text style={styles.serviceSuccessCheck}>✓</Text></View>
-        <Text style={[styles.heading, styles.serviceSuccessTitle]}>{translations.serviceRequestSubmitted}</Text>
+        <View style={styles.serviceSuccessIcon}>
+          <Text style={styles.serviceSuccessCheck}>✓</Text>
+        </View>
+        <Text style={[styles.heading, styles.serviceSuccessTitle]}>
+          {translations.serviceRequestSubmitted}
+        </Text>
         <Text style={styles.serviceRequestId}>{createdServiceRequest?.id}</Text>
-        <Text style={styles.customerAddress}>{createdServiceRequest?.customerName} · {createdServiceRequest?.accountNo}</Text>
+        <Text style={styles.customerAddress}>
+          {createdServiceRequest?.customerName} ·{" "}
+          {createdServiceRequest?.accountNo}
+        </Text>
         <Text style={styles.serviceProblemText}>
-          {createdServiceRequest ? getServiceProblemLabel(createdServiceRequest.problemType) : ''}
+          {createdServiceRequest
+            ? getServiceProblemLabel(createdServiceRequest.problemType)
+            : ""}
         </Text>
         <Text style={styles.servicePendingBadge}>
-          ⟳  {createdServiceRequest ? getServiceRequestStatusLabel(createdServiceRequest.status) : ''}
+          ⟳{" "}
+          {createdServiceRequest
+            ? getServiceRequestStatusLabel(createdServiceRequest.status)
+            : ""}
         </Text>
       </View>
       <View style={styles.serviceRequestFooter}>
-        <Pressable onPress={() => setScreen('sr')} style={styles.primaryButton}>
-          <Text style={styles.primaryButtonText}>{translations.backToServiceRequests}</Text>
+        <Pressable onPress={() => setScreen("sr")} style={styles.primaryButton}>
+          <Text style={styles.primaryButtonText}>
+            {translations.backToServiceRequests}
+          </Text>
         </Pressable>
-        <Pressable onPress={openCreateServiceRequest} style={styles.secondaryFooterButton}>
-          <Text style={styles.secondaryFooterText}>{translations.createAnotherServiceRequest}</Text>
+        <Pressable
+          onPress={openCreateServiceRequest}
+          style={styles.secondaryFooterButton}
+        >
+          <Text style={styles.secondaryFooterText}>
+            {translations.createAnotherServiceRequest}
+          </Text>
         </Pressable>
       </View>
     </View>
@@ -1928,12 +2627,11 @@ export default function App() {
   const renderWebList = () => (
     <View style={styles.webDashboard}>
       <View style={styles.webMain}>
-        <View style={[styles.webTopBar, isCompactWeb && styles.webTopBarCompact]}>
+        <View
+          style={[styles.webTopBar, isCompactWeb && styles.webTopBarCompact]}
+        >
           {renderPageHeaderControls()}
           <View>
-            <View>
-              <Text style={styles.webBreadcrumb}>{translations.workspace}</Text>
-            </View>
             <Text style={styles.webPageTitle}>{translations.meterReading}</Text>
           </View>
           {renderPageBackButton()}
@@ -1941,75 +2639,118 @@ export default function App() {
 
         <ScrollView
           style={styles.webContent}
-          contentContainerStyle={[styles.webContentInner, styles.webPageFooterSpace, isCompactWeb && styles.webContentInnerCompact]}
+          contentContainerStyle={[
+            styles.webContentInner,
+            styles.webPageFooterSpace,
+            isCompactWeb && styles.webContentInnerCompact,
+          ]}
         >
           <View style={styles.webWelcomeRow}>
             <View>
-              <Text style={styles.webWelcomeTitle}>{translations.welcomeGreeting}</Text>
+              <Text style={styles.webWelcomeTitle}>
+                {translations.welcomeGreeting}
+              </Text>
             </View>
-            <View style={{ flexDirection: 'row', gap: 10, alignItems: 'center' }}>
+            <View
+              style={{ flexDirection: "row", gap: 10, alignItems: "center" }}
+            >
               <Pressable
                 onPress={() => {
                   resetNewReadingForm();
-                  setScreen('newReading');
+                  setScreen("newReading");
                 }}
                 style={styles.webPrimaryButton}
               >
-                <Text style={styles.webPrimaryButtonText}>＋  {translations.newReading}</Text>
+                <Text style={styles.webPrimaryButtonText}>
+                  ＋ {translations.newReading}
+                </Text>
               </Pressable>
             </View>
           </View>
 
-          <View style={[styles.webStatsRow, isCompactWeb && styles.webStatsRowCompact]}>
+          <View
+            style={[
+              styles.webStatsRow,
+              isCompactWeb && styles.webStatsRowCompact,
+            ]}
+          >
             <Pressable
               accessibilityRole="tab"
-              accessibilityState={{ selected: readingDashboardTab === 'pending' }}
+              accessibilityState={{
+                selected: readingDashboardTab === "pending",
+              }}
               onPress={() => {
-                setReadingDashboardTab('pending');
-                setSearchText('');
+                setReadingDashboardTab("pending");
+                setSearchText("");
               }}
               style={[
                 styles.webStatCard,
                 styles.webStatCardButton,
                 styles.webStatCardPending,
-                readingDashboardTab === 'pending' && styles.webStatCardPendingActive,
+                readingDashboardTab === "pending" &&
+                  styles.webStatCardPendingActive,
                 isCompactWeb && styles.webStatCardCompact,
               ]}
             >
-              <Text style={[styles.webStatLabel, styles.webStatPendingText]}>{translations.pendingReadings}</Text>
-              <Text style={[styles.webStatValue, styles.webStatPendingText]}>{assignedCustomers.length}</Text>
-              <Text style={styles.webStatHint}>{translations.awaitingAdminReview}</Text>
+              <Text style={[styles.webStatLabel, styles.webStatPendingText]}>
+                {translations.pendingReadings}
+              </Text>
+              <Text style={[styles.webStatValue, styles.webStatPendingText]}>
+                {assignedCustomers.length}
+              </Text>
+              <Text style={styles.webStatHint}>
+                {translations.awaitingAdminReview}
+              </Text>
             </Pressable>
             <Pressable
               accessibilityRole="tab"
-              accessibilityState={{ selected: readingDashboardTab === 'completed' }}
+              accessibilityState={{
+                selected: readingDashboardTab === "completed",
+              }}
               onPress={() => {
-                setReadingDashboardTab('completed');
-                setSearchText('');
+                setReadingDashboardTab("completed");
+                setSearchText("");
               }}
               style={[
                 styles.webStatCard,
                 styles.webStatCardButton,
                 styles.webStatCardCompleted,
-                readingDashboardTab === 'completed' && styles.webStatCardCompletedActive,
+                readingDashboardTab === "completed" &&
+                  styles.webStatCardCompletedActive,
                 isCompactWeb && styles.webStatCardCompact,
               ]}
             >
-              <Text style={[styles.webStatLabel, styles.webStatCompletedText]}>{translations.completedReadings}</Text>
-              <Text style={[styles.webStatValue, styles.webStatCompletedText]}>{completedReadings.length}</Text>
-              <Text style={styles.webStatHint}>{translations.completedThisCycle}</Text>
+              <Text style={[styles.webStatLabel, styles.webStatCompletedText]}>
+                {translations.completedReadings}
+              </Text>
+              <Text style={[styles.webStatValue, styles.webStatCompletedText]}>
+                {completedReadings.length}
+              </Text>
+              <Text style={styles.webStatHint}>
+                {translations.completedThisCycle}
+              </Text>
             </Pressable>
           </View>
 
           <View style={styles.webPanel}>
-            <View style={[styles.webPanelHeading, isCompactWeb && styles.webPanelHeadingCompact]}>
+            <View
+              style={[
+                styles.webPanelHeading,
+                isCompactWeb && styles.webPanelHeadingCompact,
+              ]}
+            >
               <View style={isCompactWeb && styles.webPanelHeadingText}>
                 <Text style={styles.webPanelTitle}>
-                  {readingDashboardTab === 'pending' ? translations.pendingReadings : translations.completedReadings}
+                  {readingDashboardTab === "pending"
+                    ? translations.pendingReadings
+                    : translations.completedReadings}
                 </Text>
               </View>
               <Text style={styles.webRecordCount}>
-                {readingDashboardTab === 'pending' ? filteredCustomers.length : filteredCompletedReadings.length} {translations.recordCountSuffix}
+                {readingDashboardTab === "pending"
+                  ? filteredCustomers.length
+                  : filteredCompletedReadings.length}{" "}
+                {translations.recordCountSuffix}
               </Text>
             </View>
 
@@ -2029,136 +2770,284 @@ export default function App() {
                 accessibilityState={{ expanded: readingFilterOpen }}
                 onPress={() => {
                   if (!readingFilterOpen) setDraftWardFilter(wardFilter);
-                  if (!readingFilterOpen) setDraftBillApprovalFilter(billApprovalFilter);
+                  if (!readingFilterOpen)
+                    setDraftBillApprovalFilter(billApprovalFilter);
                   setWardOptionOpen(false);
                   setReadingFilterOpen((open) => !open);
                 }}
-                style={[styles.webFilterTriggerButton, wardFilter !== 'all' && styles.webFilterTriggerButtonActive]}
+                style={[
+                  styles.webFilterTriggerButton,
+                  wardFilter !== "all" && styles.webFilterTriggerButtonActive,
+                ]}
               >
-                <Text style={[styles.filterTriggerText, wardFilter !== 'all' && styles.filterTriggerTextActive]}>
-                  {translations.filter}{activeReadingFilterCount > 0 ? ` · ${activeReadingFilterCount}` : ''}
+                <Text
+                  style={[
+                    styles.filterTriggerText,
+                    wardFilter !== "all" && styles.filterTriggerTextActive,
+                  ]}
+                >
+                  {translations.filter}
+                  {activeReadingFilterCount > 0
+                    ? ` · ${activeReadingFilterCount}`
+                    : ""}
                 </Text>
               </Pressable>
             </View>
             {renderReadingFilterPanel()}
 
-            {readingDashboardTab === 'pending' && assignedCustomersLoading ? (
-              <Text style={styles.webPanelSubtitle}>{translations.loadingSubmittedReadings}</Text>
-            ) : readingDashboardTab === 'pending' && assignedCustomersError ? (
+            {readingDashboardTab === "pending" && assignedCustomersLoading ? (
+              <Text style={styles.webPanelSubtitle}>
+                {translations.loadingSubmittedReadings}
+              </Text>
+            ) : readingDashboardTab === "pending" && assignedCustomersError ? (
               <View style={styles.emptyFilteredBox}>
-                <Text accessibilityRole="alert" style={styles.emptyFilteredTitle}>{assignedCustomersError}</Text>
+                <Text
+                  accessibilityRole="alert"
+                  style={styles.emptyFilteredTitle}
+                >
+                  {assignedCustomersError}
+                </Text>
                 <Pressable
-                  onPress={() => setAssignedCustomersRefreshKey((value) => value + 1)}
+                  onPress={() =>
+                    setAssignedCustomersRefreshKey((value) => value + 1)
+                  }
                   style={styles.emptyFilteredResetBtn}
                 >
                   <Text style={styles.emptyFilteredResetBtnText}>Retry</Text>
                 </Pressable>
               </View>
             ) : null}
-            {readingDashboardTab === 'completed' && completedReadingsLoading ? (
-              <Text style={styles.webPanelSubtitle}>{translations.loadingCompletedReadings}</Text>
+            {readingDashboardTab === "completed" && completedReadingsLoading ? (
+              <Text style={styles.webPanelSubtitle}>
+                {translations.loadingCompletedReadings}
+              </Text>
             ) : null}
-            {readingDashboardTab === 'completed' && completedReadingsError ? (
+            {readingDashboardTab === "completed" && completedReadingsError ? (
               <View style={styles.emptyFilteredBox}>
-                <Text accessibilityRole="alert" style={styles.emptyFilteredTitle}>{completedReadingsError}</Text>
-                <Pressable onPress={() => setAssignedCustomersRefreshKey((value) => value + 1)} style={styles.emptyFilteredResetBtn}>
-                  <Text style={styles.emptyFilteredResetBtnText}>{translations.retry}</Text>
+                <Text
+                  accessibilityRole="alert"
+                  style={styles.emptyFilteredTitle}
+                >
+                  {completedReadingsError}
+                </Text>
+                <Pressable
+                  onPress={() =>
+                    setAssignedCustomersRefreshKey((value) => value + 1)
+                  }
+                  style={styles.emptyFilteredResetBtn}
+                >
+                  <Text style={styles.emptyFilteredResetBtnText}>
+                    {translations.retry}
+                  </Text>
                 </Pressable>
               </View>
             ) : null}
 
-            {readingDashboardTab === 'pending' && !isCompactWeb ? (
+            {readingDashboardTab === "pending" && !isCompactWeb ? (
               <View style={styles.webTableHeader}>
-                <Text style={[styles.webTableHeaderText, styles.webCustomerColumn]}>{translations.dashboardCustomer}</Text>
-                <Text style={[styles.webTableHeaderText, styles.webAccountColumn]}>{translations.dashboardAccountMeter}</Text>
-                <Text style={[styles.webTableHeaderText, styles.webStatusColumn]}>{translations.dashboardStatus}</Text>
-                <Text style={[styles.webTableHeaderText, styles.webAmountColumn]}>{translations.dashboardBillAmount}</Text>
+                <Text
+                  style={[styles.webTableHeaderText, styles.webCustomerColumn]}
+                >
+                  {translations.dashboardCustomer}
+                </Text>
+                <Text
+                  style={[styles.webTableHeaderText, styles.webAccountColumn]}
+                >
+                  {translations.dashboardAccountMeter}
+                </Text>
+                <Text
+                  style={[styles.webTableHeaderText, styles.webStatusColumn]}
+                >
+                  {translations.dashboardStatus}
+                </Text>
+                <Text
+                  style={[styles.webTableHeaderText, styles.webAmountColumn]}
+                >
+                  {translations.dashboardBillAmount}
+                </Text>
               </View>
             ) : null}
 
-            {readingDashboardTab === 'pending' && !assignedCustomersLoading && !assignedCustomersError ? filteredCustomers.map((customer) => (
-              <Pressable
-                key={customer.id}
-                onPress={() => {
-                  setSelectedCustomer(customer);
-                  setScreen('detail');
-                }}
-                style={isCompactWeb ? styles.webMobileCustomerRow : styles.webTableRow}
-              >
-                {isCompactWeb ? (
-                  <>
-                    <View style={styles.webMobileCustomerTop}>
-                      <Text style={styles.webCustomerName}>{customer.name}</Text>
-                      <Text style={[styles.webAmountText, { color: customer.color }]}>{customer.amt}</Text>
-                    </View>
-                    <Text style={styles.webCustomerAddress}>{customer.addr}</Text>
-                    {customer.wardNo ? <Text style={styles.webCustomerAddress}>{translations.ward} {customer.wardNo}</Text> : null}
-                    <View style={styles.webMobileCustomerBottom}>
-                      <Text style={styles.webTableSecondaryText}>{customer.acc} · {translations.meter} {customer.meter}</Text>
-                      <View style={styles.webMobileBadgesRow}>
-                        <Text style={[styles.webStatusBadge, { color: customer.color, backgroundColor: `${customer.color}14` }]}>
-                          {translations.pending}
-                        </Text>
-                        <View style={styles.badgeApprovalReq}>
-                          <Text style={styles.badgeApprovalReqText}>{translations.awaitingAdminReview}</Text>
+            {readingDashboardTab === "pending" &&
+            !assignedCustomersLoading &&
+            !assignedCustomersError
+              ? filteredCustomers.map((customer) => (
+                  <Pressable
+                    key={customer.id}
+                    onPress={() => {
+                      setSelectedCustomer(customer);
+                      setScreen("detail");
+                    }}
+                    style={
+                      isCompactWeb
+                        ? styles.webMobileCustomerRow
+                        : styles.webTableRow
+                    }
+                  >
+                    {isCompactWeb ? (
+                      <>
+                        <View style={styles.webMobileCustomerTop}>
+                          <Text style={styles.webCustomerName}>
+                            {customer.name}
+                          </Text>
+                          <Text
+                            style={[
+                              styles.webAmountText,
+                              { color: customer.color },
+                            ]}
+                          >
+                            {customer.amt}
+                          </Text>
                         </View>
-                      </View>
-                    </View>
-                    {customer.flag ? <Text style={styles.webComplaint}>{translations.complaint}</Text> : null}
-                  </>
-                ) : (
-                  <>
-                    <View style={styles.webCustomerColumn}>
-                      <Text style={styles.webCustomerName}>{customer.name}</Text>
-                      <Text style={styles.webCustomerAddress}>{customer.addr}</Text>
-                      {customer.wardNo ? <Text style={styles.webCustomerAddress}>{translations.ward} {customer.wardNo}</Text> : null}
-                      {customer.flag ? <Text style={styles.webComplaint}>{translations.complaint}</Text> : null}
-                    </View>
-                    <View style={styles.webAccountColumn}>
-                      <Text style={styles.webTableMainText}>{customer.acc}</Text>
-                      <Text style={styles.webTableSecondaryText}>{translations.meter} {customer.meter}</Text>
-                    </View>
-                    <View style={styles.webStatusColumn}>
-                      <Text style={[styles.webStatusBadge, { color: customer.color, backgroundColor: `${customer.color}14` }]}>
-                        {translations.pending}
-                      </Text>
-                      <View style={styles.webBadgeApprovalReq}>
-                        <Text style={styles.webBadgeApprovalReqText}>{translations.awaitingAdminReview}</Text>
-                      </View>
-                    </View>
-                    <View style={[styles.webAmountColumn, styles.webAmountCell]}>
-                      <Text style={[styles.webAmountText, { color: customer.color }]}>{customer.amt}</Text>
-                      <Text style={styles.webRowArrow}>›</Text>
-                    </View>
-                  </>
-                )}
-              </Pressable>
-            )) : null}
-            {readingDashboardTab === 'pending' && !assignedCustomersLoading && !assignedCustomersError && filteredCustomers.length === 0 ? (
+                        <Text style={styles.webCustomerAddress}>
+                          {customer.addr}
+                        </Text>
+                        {customer.wardNo ? (
+                          <Text style={styles.webCustomerAddress}>
+                            {translations.ward} {customer.wardNo}
+                          </Text>
+                        ) : null}
+                        <View style={styles.webMobileCustomerBottom}>
+                          <Text style={styles.webTableSecondaryText}>
+                            {customer.acc} · {translations.meter}{" "}
+                            {customer.meter}
+                          </Text>
+                          <View style={styles.webMobileBadgesRow}>
+                            <Text
+                              style={[
+                                styles.webStatusBadge,
+                                {
+                                  color: customer.color,
+                                  backgroundColor: `${customer.color}14`,
+                                },
+                              ]}
+                            >
+                              {translations.pending}
+                            </Text>
+                            <View style={styles.badgeApprovalReq}>
+                              <Text style={styles.badgeApprovalReqText}>
+                                {translations.awaitingAdminReview}
+                              </Text>
+                            </View>
+                          </View>
+                        </View>
+                        {customer.flag ? (
+                          <Text style={styles.webComplaint}>
+                            {translations.complaint}
+                          </Text>
+                        ) : null}
+                      </>
+                    ) : (
+                      <>
+                        <View style={styles.webCustomerColumn}>
+                          <Text style={styles.webCustomerName}>
+                            {customer.name}
+                          </Text>
+                          <Text style={styles.webCustomerAddress}>
+                            {customer.addr}
+                          </Text>
+                          {customer.wardNo ? (
+                            <Text style={styles.webCustomerAddress}>
+                              {translations.ward} {customer.wardNo}
+                            </Text>
+                          ) : null}
+                          {customer.flag ? (
+                            <Text style={styles.webComplaint}>
+                              {translations.complaint}
+                            </Text>
+                          ) : null}
+                        </View>
+                        <View style={styles.webAccountColumn}>
+                          <Text style={styles.webTableMainText}>
+                            {customer.acc}
+                          </Text>
+                          <Text style={styles.webTableSecondaryText}>
+                            {translations.meter} {customer.meter}
+                          </Text>
+                        </View>
+                        <View style={styles.webStatusColumn}>
+                          <Text
+                            style={[
+                              styles.webStatusBadge,
+                              {
+                                color: customer.color,
+                                backgroundColor: `${customer.color}14`,
+                              },
+                            ]}
+                          >
+                            {translations.pending}
+                          </Text>
+                          <View style={styles.webBadgeApprovalReq}>
+                            <Text style={styles.webBadgeApprovalReqText}>
+                              {translations.awaitingAdminReview}
+                            </Text>
+                          </View>
+                        </View>
+                        <View
+                          style={[styles.webAmountColumn, styles.webAmountCell]}
+                        >
+                          <Text
+                            style={[
+                              styles.webAmountText,
+                              { color: customer.color },
+                            ]}
+                          >
+                            {customer.amt}
+                          </Text>
+                          <Text style={styles.webRowArrow}>›</Text>
+                        </View>
+                      </>
+                    )}
+                  </Pressable>
+                ))
+              : null}
+            {readingDashboardTab === "pending" &&
+            !assignedCustomersLoading &&
+            !assignedCustomersError &&
+            filteredCustomers.length === 0 ? (
               <View style={styles.emptyFilteredBox}>
                 <Text style={styles.emptyFilteredIcon}>📋</Text>
                 <Text style={styles.emptyFilteredTitle}>
-                  {getReadingEmptyMessage(assignedCustomers.length, translations.noPendingReadings)}
+                  {getReadingEmptyMessage(
+                    assignedCustomers.length,
+                    translations.noPendingReadings,
+                  )}
                 </Text>
               </View>
             ) : null}
-            {readingDashboardTab === 'completed' && !isCompactWeb ? (
+            {readingDashboardTab === "completed" && !isCompactWeb ? (
               <View style={styles.completedReadingTableHeader}>
-                <Text style={styles.completedReadingIdentity}>{translations.customerDetails} / {translations.accountNumber}</Text>
-                <Text style={styles.completedReadingValueColumn}>{translations.currentBill}</Text>
-                <Text style={styles.completedReadingUsageColumn}>{translations.completed}</Text>
-                <Text style={styles.completedReadingDateColumn}>{translations.readingDate}</Text>
+                <Text style={styles.completedReadingIdentity}>
+                  {translations.customerDetails} / {translations.accountNumber}
+                </Text>
+                <Text style={styles.completedReadingValueColumn}>
+                  {translations.totalAmountDue}
+                </Text>
+                <Text style={styles.completedReadingUsageColumn}>
+                  {translations.consumption}
+                </Text>
+                <Text style={styles.completedReadingDateColumn}>
+                  {translations.readingDate}
+                </Text>
               </View>
             ) : null}
-            {readingDashboardTab === 'completed' && !completedReadingsLoading && !completedReadingsError && filteredCompletedReadings.length === 0 ? (
+            {readingDashboardTab === "completed" &&
+            !completedReadingsLoading &&
+            !completedReadingsError &&
+            filteredCompletedReadings.length === 0 ? (
               <View style={styles.emptyFilteredBox}>
                 <Text style={styles.emptyFilteredIcon}>✓</Text>
                 <Text style={styles.emptyFilteredTitle}>
-                  {getReadingEmptyMessage(completedReadings.length, translations.noCompletedReadings)}
+                  {getReadingEmptyMessage(
+                    completedReadings.length,
+                    translations.noCompletedReadings,
+                  )}
                 </Text>
               </View>
             ) : null}
-            {readingDashboardTab === 'completed' && !completedReadingsLoading && !completedReadingsError
+            {readingDashboardTab === "completed" &&
+            !completedReadingsLoading &&
+            !completedReadingsError
               ? filteredCompletedReadings.map(renderCompletedRecord)
               : null}
           </View>
@@ -2168,21 +3057,55 @@ export default function App() {
     </View>
   );
 
-  const renderCompletedRecord = (record: CompletedReading) => (
+  const renderCompletedRecord = (record: CompletedReading) =>
     isWeb && !isCompactWeb ? (
       <View key={record.id} style={styles.completedReadingTableRow}>
         <View style={styles.completedReadingIdentity}>
           <Text style={styles.webCustomerName}>{record.customer}</Text>
-          <Text style={styles.webTableSecondaryText}>{record.account} · {translations.meter} {record.meter}{record.wardNo ? ` · ${translations.ward} ${record.wardNo}` : ''}</Text>
+          <Text style={styles.webTableSecondaryText}>
+            {record.account} · {translations.meter} {record.meter}
+            {record.wardNo ? ` · ${translations.ward} ${record.wardNo}` : ""}
+          </Text>
+          <Text style={styles.webTableSecondaryText}>
+            {translations.billNumber}: {record.billNo} ·{" "}
+            {translations.billingPeriod}: {record.billingPeriod}
+          </Text>
         </View>
         <View style={styles.completedReadingValueColumn}>
-          <Text style={styles.completedReadingValue}>{record.current}</Text>
+          <Text style={styles.completedReadingUsage}>
+            {formatTaka(record.totalAmount)}
+          </Text>
+          <Text style={styles.webTableSecondaryText}>
+            {translations.baseCharge}: {formatTaka(record.baseCharge)}
+          </Text>
+          <Text style={styles.webTableSecondaryText}>
+            {translations.additionalCharge}:{" "}
+            {formatTaka(record.additionalCharge)}
+          </Text>
+          <Text style={styles.webTableSecondaryText}>
+            {translations.vatAmount}: {formatTaka(record.vatAmount)}
+          </Text>
         </View>
         <View style={styles.completedReadingUsageColumn}>
-          <Text style={styles.completedReadingUsage}>{translations.completed}</Text>
+          <Text style={styles.completedReadingUsage}>
+            {record.consumption} m³
+          </Text>
+          <Text style={styles.webTableSecondaryText}>
+            {record.previousReading} → {record.currentReading}
+          </Text>
+          <Text style={styles.webTableSecondaryText}>
+            {translations.tariffRate}: {formatTaka(record.tariffRate)}/m³ · VAT{" "}
+            {record.vatRate}%
+          </Text>
         </View>
         <View style={styles.completedReadingDateColumn}>
           <Text style={styles.webTableSecondaryText}>{record.date}</Text>
+          {record.dueDate ? (
+            <Text style={styles.webTableSecondaryText}>
+              {translations.dueDate}:{" "}
+              {new Date(record.dueDate).toLocaleDateString()}
+            </Text>
+          ) : null}
         </View>
       </View>
     ) : (
@@ -2190,35 +3113,72 @@ export default function App() {
         <View style={styles.completedReadingCardHeader}>
           <View style={styles.completedReadingIdentity}>
             <Text style={styles.webCustomerName}>{record.customer}</Text>
-            <Text style={styles.webTableSecondaryText}>{record.account} · {translations.meter} {record.meter}{record.wardNo ? ` · ${translations.ward} ${record.wardNo}` : ''}</Text>
+            <Text style={styles.webTableSecondaryText}>
+              {record.account} · {translations.meter} {record.meter}
+              {record.wardNo ? ` · ${translations.ward} ${record.wardNo}` : ""}
+            </Text>
+            <Text style={styles.webTableSecondaryText}>
+              {translations.billNumber}: {record.billNo} ·{" "}
+              {translations.billingPeriod}: {record.billingPeriod}
+            </Text>
           </View>
-          <Text style={styles.completedReadingUsage}>{record.current}</Text>
+          <Text style={styles.completedReadingUsage}>
+            {formatTaka(record.totalAmount)}
+          </Text>
         </View>
         <View style={styles.completedReadingCardFooter}>
           <Text style={styles.webTableSecondaryText}>
-            {translations.completed} · {record.date}
+            {translations.consumption}:{" "}
+            <Text style={styles.completedReadingUsage}>
+              {record.consumption} m³
+            </Text>{" "}
+            ({record.previousReading} → {record.currentReading})
+          </Text>
+          <Text style={styles.webTableSecondaryText}>
+            {translations.baseCharge}: {formatTaka(record.baseCharge)} +{" "}
+            {translations.additionalCharge}:{" "}
+            {formatTaka(record.additionalCharge)} + {translations.vatAmount}:{" "}
+            {formatTaka(record.vatAmount)}
+          </Text>
+          <Text style={styles.webTableSecondaryText}>
+            {translations.tariffRate}: {formatTaka(record.tariffRate)}/m³ · VAT{" "}
+            {record.vatRate}% · {record.date}
           </Text>
         </View>
       </View>
-    )
-  );
+    );
 
-  const renderCompletedReadings = () => (
+  const renderCompletedReadings = () =>
     isWeb ? (
       <View style={styles.webDashboard}>
         <View style={styles.webMain}>
-          <View style={[styles.webTopBar, isCompactWeb && styles.webTopBarCompact]}>
+          <View
+            style={[styles.webTopBar, isCompactWeb && styles.webTopBarCompact]}
+          >
             {renderPageHeaderControls()}
             <View>
-              <Text style={styles.webPageTitle}>{translations.completedReadings}</Text>
+              <Text style={styles.webPageTitle}>
+                {translations.completedReadings}
+              </Text>
             </View>
             {renderPageBackButton()}
           </View>
-          <ScrollView style={styles.webContent} contentContainerStyle={[styles.webContentInner, styles.webPageFooterSpace, isCompactWeb && styles.webContentInnerCompact]}>
+          <ScrollView
+            style={styles.webContent}
+            contentContainerStyle={[
+              styles.webContentInner,
+              styles.webPageFooterSpace,
+              isCompactWeb && styles.webContentInnerCompact,
+            ]}
+          >
             <View style={styles.completedReadingsSummary}>
               <View>
-                <Text style={styles.completedReadingsCount}>{completedReadings.length}</Text>
-                <Text style={styles.webStatHint}>{translations.completedThisCycle}</Text>
+                <Text style={styles.completedReadingsCount}>
+                  {completedReadings.length}
+                </Text>
+                <Text style={styles.webStatHint}>
+                  {translations.completedThisCycle}
+                </Text>
               </View>
             </View>
             <View style={styles.webPanel}>
@@ -2238,38 +3198,78 @@ export default function App() {
                   accessibilityState={{ expanded: readingFilterOpen }}
                   onPress={() => {
                     if (!readingFilterOpen) setDraftWardFilter(wardFilter);
-                    if (!readingFilterOpen) setDraftBillApprovalFilter(billApprovalFilter);
+                    if (!readingFilterOpen)
+                      setDraftBillApprovalFilter(billApprovalFilter);
                     setWardOptionOpen(false);
                     setReadingFilterOpen((open) => !open);
                   }}
-                  style={[styles.webFilterTriggerButton, wardFilter !== 'all' && styles.webFilterTriggerButtonActive]}
+                  style={[
+                    styles.webFilterTriggerButton,
+                    wardFilter !== "all" && styles.webFilterTriggerButtonActive,
+                  ]}
                 >
-                  <Text style={[styles.filterTriggerText, wardFilter !== 'all' && styles.filterTriggerTextActive]}>
-                    {translations.filter}{activeReadingFilterCount > 0 ? ` · ${activeReadingFilterCount}` : ''}
+                  <Text
+                    style={[
+                      styles.filterTriggerText,
+                      wardFilter !== "all" && styles.filterTriggerTextActive,
+                    ]}
+                  >
+                    {translations.filter}
+                    {activeReadingFilterCount > 0
+                      ? ` · ${activeReadingFilterCount}`
+                      : ""}
                   </Text>
                 </Pressable>
               </View>
               {renderReadingFilterPanel()}
               {!isCompactWeb ? (
                 <View style={styles.completedReadingTableHeader}>
-                  <Text style={styles.completedReadingIdentity}>{translations.customerDetails} / {translations.accountNumber}</Text>
-                  <Text style={styles.completedReadingValueColumn}>{translations.currentBill}</Text>
-                  <Text style={styles.completedReadingUsageColumn}>{translations.completed}</Text>
-                  <Text style={styles.completedReadingDateColumn}>{translations.readingDate}</Text>
+                  <Text style={styles.completedReadingIdentity}>
+                    {translations.customerDetails} /{" "}
+                    {translations.accountNumber}
+                  </Text>
+                  <Text style={styles.completedReadingValueColumn}>
+                    {translations.totalAmountDue}
+                  </Text>
+                  <Text style={styles.completedReadingUsageColumn}>
+                    {translations.consumption}
+                  </Text>
+                  <Text style={styles.completedReadingDateColumn}>
+                    {translations.readingDate}
+                  </Text>
                 </View>
               ) : null}
-              {completedReadingsLoading ? <Text style={styles.webPanelSubtitle}>{translations.loadingCompletedReadings}</Text> : null}
+              {completedReadingsLoading ? (
+                <Text style={styles.webPanelSubtitle}>
+                  {translations.loadingCompletedReadings}
+                </Text>
+              ) : null}
               {completedReadingsError ? (
                 <View>
-                  <Text accessibilityRole="alert" style={styles.readingError}>{completedReadingsError}</Text>
-                  <Pressable onPress={() => setAssignedCustomersRefreshKey((value) => value + 1)}>
-                    <Text style={styles.emptyFilteredResetBtnText}>{translations.retry}</Text>
+                  <Text accessibilityRole="alert" style={styles.readingError}>
+                    {completedReadingsError}
+                  </Text>
+                  <Pressable
+                    onPress={() =>
+                      setAssignedCustomersRefreshKey((value) => value + 1)
+                    }
+                  >
+                    <Text style={styles.emptyFilteredResetBtnText}>
+                      {translations.retry}
+                    </Text>
                   </Pressable>
                 </View>
               ) : null}
-              {!completedReadingsLoading && !completedReadingsError && filteredCompletedReadings.length === 0
-                ? <Text style={styles.webPanelSubtitle}>{getReadingEmptyMessage(completedReadings.length, translations.noCompletedReadings)}</Text>
-                : null}
+              {!completedReadingsLoading &&
+              !completedReadingsError &&
+              filteredCompletedReadings.length === 0 ? (
+                <Text style={styles.webPanelSubtitle}>
+                  {getReadingEmptyMessage(
+                    completedReadings.length,
+                    translations.noCompletedReadings,
+                  )}
+                </Text>
+              ) : null}
               {filteredCompletedReadings.map(renderCompletedRecord)}
             </View>
             {renderWebPageFooter()}
@@ -2280,13 +3280,19 @@ export default function App() {
       <View style={styles.screenShellDark}>
         <View style={styles.topBar}>
           {renderPageHeaderControls()}
-          <Text style={[styles.heading, styles.topBarTitle]}>{translations.completedReadings}</Text>
+          <Text style={[styles.heading, styles.topBarTitle]}>
+            {translations.completedReadings}
+          </Text>
           {renderPageBackButton()}
         </View>
         <View style={styles.completedReadingsSummary}>
           <View>
-            <Text style={styles.completedReadingsCount}>{completedReadings.length}</Text>
-            <Text style={styles.webStatHint}>{translations.completedThisCycle}</Text>
+            <Text style={styles.completedReadingsCount}>
+              {completedReadings.length}
+            </Text>
+            <Text style={styles.webStatHint}>
+              {translations.completedThisCycle}
+            </Text>
           </View>
         </View>
         <View style={styles.searchArea}>
@@ -2305,117 +3311,231 @@ export default function App() {
             accessibilityState={{ expanded: readingFilterOpen }}
             onPress={() => {
               if (!readingFilterOpen) setDraftWardFilter(wardFilter);
-              if (!readingFilterOpen) setDraftBillApprovalFilter(billApprovalFilter);
+              if (!readingFilterOpen)
+                setDraftBillApprovalFilter(billApprovalFilter);
               setWardOptionOpen(false);
               setReadingFilterOpen((open) => !open);
             }}
-            style={[styles.filterTriggerButton, wardFilter !== 'all' && styles.filterTriggerButtonActive]}
+            style={[
+              styles.filterTriggerButton,
+              wardFilter !== "all" && styles.filterTriggerButtonActive,
+            ]}
           >
-            <Text style={[styles.filterTriggerText, wardFilter !== 'all' && styles.filterTriggerTextActive]}>
-              {translations.filter}{activeReadingFilterCount > 0 ? ` · ${activeReadingFilterCount}` : ''}
+            <Text
+              style={[
+                styles.filterTriggerText,
+                wardFilter !== "all" && styles.filterTriggerTextActive,
+              ]}
+            >
+              {translations.filter}
+              {activeReadingFilterCount > 0
+                ? ` · ${activeReadingFilterCount}`
+                : ""}
             </Text>
           </Pressable>
         </View>
         {renderReadingFilterPanel()}
-        <ScrollView style={styles.customerList} contentContainerStyle={styles.completedReadingsList}>
-          {completedReadingsLoading ? <Text style={styles.webPanelSubtitle}>{translations.loadingCompletedReadings}</Text> : null}
+        <ScrollView
+          style={styles.customerList}
+          contentContainerStyle={styles.completedReadingsList}
+        >
+          {completedReadingsLoading ? (
+            <Text style={styles.webPanelSubtitle}>
+              {translations.loadingCompletedReadings}
+            </Text>
+          ) : null}
           {completedReadingsError ? (
             <View>
-              <Text accessibilityRole="alert" style={styles.readingError}>{completedReadingsError}</Text>
-              <Pressable onPress={() => setAssignedCustomersRefreshKey((value) => value + 1)}>
-                <Text style={styles.emptyFilteredResetBtnText}>{translations.retry}</Text>
+              <Text accessibilityRole="alert" style={styles.readingError}>
+                {completedReadingsError}
+              </Text>
+              <Pressable
+                onPress={() =>
+                  setAssignedCustomersRefreshKey((value) => value + 1)
+                }
+              >
+                <Text style={styles.emptyFilteredResetBtnText}>
+                  {translations.retry}
+                </Text>
               </Pressable>
             </View>
           ) : null}
-          {!completedReadingsLoading && !completedReadingsError && filteredCompletedReadings.length === 0
-            ? <Text style={styles.webPanelSubtitle}>{getReadingEmptyMessage(completedReadings.length, translations.noCompletedReadings)}</Text>
-            : null}
+          {!completedReadingsLoading &&
+          !completedReadingsError &&
+          filteredCompletedReadings.length === 0 ? (
+            <Text style={styles.webPanelSubtitle}>
+              {getReadingEmptyMessage(
+                completedReadings.length,
+                translations.noCompletedReadings,
+              )}
+            </Text>
+          ) : null}
           {filteredCompletedReadings.map(renderCompletedRecord)}
         </ScrollView>
         <View style={styles.bottomNav}>
-          <Pressable onPress={() => setScreen('list')} style={styles.bottomNavItem}>
+          <Pressable
+            onPress={() => setScreen("list")}
+            style={styles.bottomNavItem}
+          >
             <Text style={styles.navIcon}>◉</Text>
             <Text style={styles.navLabel}>{translations.meterReading}</Text>
           </Pressable>
-          <Pressable onPress={() => setScreen('sr')} style={styles.bottomNavItem}>
+          <Pressable
+            onPress={() => setScreen("sr")}
+            style={styles.bottomNavItem}
+          >
             <Text style={styles.navIcon}>▤</Text>
             <Text style={styles.navLabel}>{translations.serviceRequest}</Text>
           </Pressable>
         </View>
       </View>
-    )
-  );
+    );
 
   const renderWebServiceRequests = () => (
     <View style={styles.webDashboard}>
       <View style={styles.webMain}>
-        <View style={[styles.webTopBar, isCompactWeb && styles.webTopBarCompact]}>
+        <View
+          style={[styles.webTopBar, isCompactWeb && styles.webTopBarCompact]}
+        >
           {renderPageHeaderControls()}
           <View>
-            <Text style={styles.webPageTitle}>{translations.serviceRequest}</Text>
+            <Text style={styles.webPageTitle}>
+              {translations.serviceRequest}
+            </Text>
           </View>
           {renderPageBackButton()}
-          <Pressable onPress={openCreateServiceRequest} style={styles.webPrimaryButton}>
-            <Text style={styles.webPrimaryButtonText}>＋  {translations.createServiceRequest}</Text>
+          <Pressable
+            onPress={openCreateServiceRequest}
+            style={styles.webPrimaryButton}
+          >
+            <Text style={styles.webPrimaryButtonText}>
+              ＋ {translations.createServiceRequest}
+            </Text>
           </Pressable>
         </View>
         {renderServiceRequestFilterModal()}
         <ScrollView
           style={styles.webContent}
-          contentContainerStyle={[styles.webContentInner, styles.webPageFooterSpace, isCompactWeb && styles.webContentInnerCompact]}
+          contentContainerStyle={[
+            styles.webContentInner,
+            styles.webPageFooterSpace,
+            isCompactWeb && styles.webContentInnerCompact,
+          ]}
         >
           <View style={styles.webPanel}>
-            <View style={[
-              styles.webPanelHeading,
-              styles.webServiceRequestHeadingLayer,
-              isCompactWeb && styles.webPanelHeadingCompact,
-              isCompactWeb && styles.webServiceRequestHeadingCompact,
-            ]}>
+            <View
+              style={[
+                styles.webPanelHeading,
+                styles.webServiceRequestHeadingLayer,
+                isCompactWeb && styles.webPanelHeadingCompact,
+                isCompactWeb && styles.webServiceRequestHeadingCompact,
+              ]}
+            >
               <View style={isCompactWeb && styles.webPanelHeadingText}>
-                <Text style={styles.webPanelTitle}>{translations.serviceRequest}</Text>
-                <Text style={styles.webPanelSubtitle}>{translations.serviceRequestListDescription}</Text>
+                <Text style={styles.webPanelTitle}>
+                  {translations.serviceRequest}
+                </Text>
+                <Text style={styles.webPanelSubtitle}>
+                  {translations.serviceRequestListDescription}
+                </Text>
               </View>
-              <View style={[styles.webServiceRequestControls, isCompactWeb && styles.webServiceRequestControlsCompact]}>
+              <View
+                style={[
+                  styles.webServiceRequestControls,
+                  isCompactWeb && styles.webServiceRequestControlsCompact,
+                ]}
+              >
                 <Pressable
                   accessibilityRole="button"
                   accessibilityState={{ expanded: serviceRequestFilterOpen }}
                   onPress={openServiceRequestFilter}
-                  style={[styles.webFilterTriggerButton, serviceRequestFilter !== 'all' && styles.webFilterTriggerButtonActive]}
+                  style={[
+                    styles.webFilterTriggerButton,
+                    serviceRequestFilter !== "all" &&
+                      styles.webFilterTriggerButtonActive,
+                  ]}
                 >
-                  <Text style={[styles.webFilterTriggerText, serviceRequestFilter !== 'all' && styles.filterTriggerTextActive]}>
-                    {translations.filter}{serviceRequestFilter !== 'all' ? ' · 1' : ''}
+                  <Text
+                    style={[
+                      styles.webFilterTriggerText,
+                      serviceRequestFilter !== "all" &&
+                        styles.filterTriggerTextActive,
+                    ]}
+                  >
+                    {translations.filter}
+                    {serviceRequestFilter !== "all" ? " · 1" : ""}
                   </Text>
                 </Pressable>
-                <Text style={[styles.webRecordCount, isCompactWeb && styles.webServiceRequestRecordCountCompact]}>
+                <Text
+                  style={[
+                    styles.webRecordCount,
+                    isCompactWeb && styles.webServiceRequestRecordCountCompact,
+                  ]}
+                >
                   {filteredServiceRequests.length} {translations.serviceRequest}
                 </Text>
               </View>
             </View>
             {serviceRequestsLoading ? (
-              <Text style={styles.webPanelSubtitle}>{translations.serviceRequestLoading}</Text>
+              <Text style={styles.webPanelSubtitle}>
+                {translations.serviceRequestLoading}
+              </Text>
             ) : serviceRequestsError ? (
               <View style={styles.emptyFilteredBox}>
-                <Text accessibilityRole="alert" style={styles.emptyFilteredTitle}>{serviceRequestsError}</Text>
-                <Pressable onPress={() => setServiceRequestsRefreshKey((key) => key + 1)} style={styles.emptyFilteredResetBtn}>
+                <Text
+                  accessibilityRole="alert"
+                  style={styles.emptyFilteredTitle}
+                >
+                  {serviceRequestsError}
+                </Text>
+                <Pressable
+                  onPress={() => setServiceRequestsRefreshKey((key) => key + 1)}
+                  style={styles.emptyFilteredResetBtn}
+                >
                   <Text style={styles.emptyFilteredResetBtnText}>Retry</Text>
                 </Pressable>
               </View>
             ) : filteredServiceRequests.length === 0 ? (
               renderServiceRequestsEmptyState()
-            ) : filteredServiceRequests.map((request) => (
-              <View key={request.id} style={[styles.webRequestRow, isCompactWeb && styles.webRequestRowCompact]}>
-                <View style={styles.webRequestIcon}><Text style={styles.webRequestIconText}>⚠</Text></View>
-                <View style={[styles.webRequestIdentity, isCompactWeb && styles.webRequestIdentityCompact]}>
-                  <Text style={styles.webCustomerName}>{request.customerName}</Text>
-                  <Text style={styles.webCustomerAddress}>
-                    {request.accountNo}{request.meterNo ? ` · ${request.meterNo}` : ''} · {request.address}
+            ) : (
+              filteredServiceRequests.map((request) => (
+                <View
+                  key={request.id}
+                  style={[
+                    styles.webRequestRow,
+                    isCompactWeb && styles.webRequestRowCompact,
+                  ]}
+                >
+                  <View style={styles.webRequestIcon}>
+                    <Text style={styles.webRequestIconText}>⚠</Text>
+                  </View>
+                  <View
+                    style={[
+                      styles.webRequestIdentity,
+                      isCompactWeb && styles.webRequestIdentityCompact,
+                    ]}
+                  >
+                    <Text style={styles.webCustomerName}>
+                      {request.customerName}
+                    </Text>
+                    <Text style={styles.webCustomerAddress}>
+                      {request.accountNo}
+                      {request.meterNo ? ` · ${request.meterNo}` : ""} ·{" "}
+                      {request.address}
+                    </Text>
+                    <Text style={styles.webCustomerAddress}>
+                      {request.description}
+                    </Text>
+                  </View>
+                  <Text style={styles.webRequestProblem}>
+                    {getServiceProblemLabel(request.problemType)}
                   </Text>
-                  <Text style={styles.webCustomerAddress}>{request.description}</Text>
+                  <Text style={styles.webRequestStatus}>
+                    {getServiceRequestStatusLabel(request.status)}
+                  </Text>
                 </View>
-                <Text style={styles.webRequestProblem}>{getServiceProblemLabel(request.problemType)}</Text>
-                <Text style={styles.webRequestStatus}>{getServiceRequestStatusLabel(request.status)}</Text>
-              </View>
-            ))}
+              ))
+            )}
           </View>
           {renderWebPageFooter()}
         </ScrollView>
@@ -2426,26 +3546,41 @@ export default function App() {
   const renderWebCreateServiceRequest = () => (
     <View style={styles.webDashboard}>
       <View style={styles.webMain}>
-        <View style={[styles.webTopBar, isCompactWeb && styles.webTopBarCompact]}>
+        <View
+          style={[styles.webTopBar, isCompactWeb && styles.webTopBarCompact]}
+        >
           {renderPageHeaderControls()}
           <View>
-            <Text style={styles.webPageTitle}>{translations.createServiceRequest}</Text>
+            <Text style={styles.webPageTitle}>
+              {translations.createServiceRequest}
+            </Text>
           </View>
           {renderPageBackButton()}
         </View>
         <ScrollView
           style={styles.webContent}
-          contentContainerStyle={[styles.webDetailContent, styles.webPageFooterSpace, isCompactWeb && styles.webDetailContentCompact]}
+          contentContainerStyle={[
+            styles.webDetailContent,
+            styles.webPageFooterSpace,
+            isCompactWeb && styles.webDetailContentCompact,
+          ]}
         >
-          <View style={[styles.webFormPanel, isCompactWeb && styles.webFormPanelCompact]}>
+          <View
+            style={[
+              styles.webFormPanel,
+              isCompactWeb && styles.webFormPanelCompact,
+            ]}
+          >
             <View style={styles.fieldBlock}>
-              <Text style={styles.labelText}>{translations.serviceRequestCustomerNumber} *</Text>
+              <Text style={styles.labelText}>
+                {translations.serviceRequestCustomerNumber} *
+              </Text>
               <TextInput
                 value={serviceAccount}
                 onChangeText={(value) => {
                   setServiceAccount(value);
                   setServiceCustomer(null);
-                  setServiceCustomerError('');
+                  setServiceCustomerError("");
                 }}
                 autoCapitalize="characters"
                 style={styles.webFormInput}
@@ -2456,88 +3591,148 @@ export default function App() {
                 style={styles.secondaryFooterButton}
               >
                 <Text style={styles.secondaryFooterText}>
-                  {serviceCustomerLoading ? translations.findingCustomer : translations.findCustomer}
+                  {serviceCustomerLoading
+                    ? translations.findingCustomer
+                    : translations.findCustomer}
                 </Text>
               </Pressable>
               {serviceCustomerError ? (
-                <Text accessibilityRole="alert" style={styles.readingError}>{serviceCustomerError}</Text>
+                <Text accessibilityRole="alert" style={styles.readingError}>
+                  {serviceCustomerError}
+                </Text>
               ) : null}
             </View>
             {serviceCustomer ? (
               <View style={styles.serviceCustomerNotice}>
-                <Text style={styles.serviceNoticeTitle}>{serviceCustomer.customerName}</Text>
-                <Text style={styles.customerAddress}>{serviceCustomer.address}</Text>
+                <Text style={styles.serviceNoticeTitle}>
+                  {serviceCustomer.customerName}
+                </Text>
                 <Text style={styles.customerAddress}>
-                  {translations.serviceRequestCustomerAccount} {serviceCustomer.accountNo}{serviceCustomer.meterNo ? ` · ${translations.serviceRequestCustomerMeter} ${serviceCustomer.meterNo}` : ''}
+                  {serviceCustomer.address}
+                </Text>
+                <Text style={styles.customerAddress}>
+                  {translations.serviceRequestCustomerAccount}{" "}
+                  {serviceCustomer.accountNo}
+                  {serviceCustomer.meterNo
+                    ? ` · ${translations.serviceRequestCustomerMeter} ${serviceCustomer.meterNo}`
+                    : ""}
                 </Text>
               </View>
             ) : null}
             <View style={styles.fieldBlock}>
-              <Text style={styles.labelText}>{translations.serviceRequestProblemType}</Text>
-              <Pressable onPress={() => setProblemMenuOpen((open) => !open)} style={styles.problemSelect}>
-                <Text style={styles.problemSelectText}>{getServiceProblemLabel(serviceProblem)}</Text>
-                <Text style={styles.problemSelectText}>{problemMenuOpen ? '▴' : '▾'}</Text>
+              <Text style={styles.labelText}>
+                {translations.serviceRequestProblemType}
+              </Text>
+              <Pressable
+                onPress={() => setProblemMenuOpen((open) => !open)}
+                style={styles.problemSelect}
+              >
+                <Text style={styles.problemSelectText}>
+                  {getServiceProblemLabel(serviceProblem)}
+                </Text>
+                <Text style={styles.problemSelectText}>
+                  {problemMenuOpen ? "▴" : "▾"}
+                </Text>
               </Pressable>
-              {problemMenuOpen ? SERVICE_PROBLEMS.map((problem) => (
-                <Pressable
-                  key={problem}
-                  onPress={() => {
-                    setServiceProblem(problem);
-                    setProblemMenuOpen(false);
-                  }}
-                  style={styles.problemOption}
-                >
-                  <Text style={styles.problemOptionText}>{getServiceProblemLabel(problem)}</Text>
-                </Pressable>
-              )) : null}
+              {problemMenuOpen
+                ? SERVICE_PROBLEMS.map((problem) => (
+                    <Pressable
+                      key={problem}
+                      onPress={() => {
+                        setServiceProblem(problem);
+                        setProblemMenuOpen(false);
+                      }}
+                      style={styles.problemOption}
+                    >
+                      <Text style={styles.problemOptionText}>
+                        {getServiceProblemLabel(problem)}
+                      </Text>
+                    </Pressable>
+                  ))
+                : null}
             </View>
             <View style={styles.fieldBlock}>
-              <Text style={styles.labelText}>{translations.serviceRequestPhoto} <Text style={styles.optionalLabel}>· {translations.optional}</Text></Text>
+              <Text style={styles.labelText}>
+                {translations.serviceRequestPhoto}{" "}
+                <Text style={styles.optionalLabel}>
+                  · {translations.optional}
+                </Text>
+              </Text>
               {servicePhoto ? (
                 <View style={styles.newReadingPhotoPreviewWrapper}>
-                  <Image source={{ uri: servicePhoto.uri }} style={styles.newReadingPhotoPreview} resizeMode="cover" />
+                  <Image
+                    source={{ uri: servicePhoto.uri }}
+                    style={styles.newReadingPhotoPreview}
+                    resizeMode="cover"
+                  />
                   <View style={styles.newReadingPhotoOverlay}>
-                    <Pressable onPress={() => setServicePhoto(null)} style={styles.newReadingRetakeBtn}>
-                      <Text style={styles.newReadingRetakeBtnText}>✕ {translations.removePhoto}</Text>
+                    <Pressable
+                      onPress={() => setServicePhoto(null)}
+                      style={styles.newReadingRetakeBtn}
+                    >
+                      <Text style={styles.newReadingRetakeBtnText}>
+                        ✕ {translations.removePhoto}
+                      </Text>
                     </Pressable>
                   </View>
                 </View>
               ) : (
                 <View style={styles.photoActionRow}>
-                  <Pressable onPress={openServiceCamera} style={styles.photoActionPrimary}>
-                    <Text style={styles.photoActionPrimaryText}>◉  {translations.serviceTakePhoto}</Text>
+                  <Pressable
+                    onPress={openServiceCamera}
+                    style={styles.photoActionPrimary}
+                  >
+                    <Text style={styles.photoActionPrimaryText}>
+                      ◉ {translations.serviceTakePhoto}
+                    </Text>
                   </Pressable>
-                  <Pressable onPress={pickServiceImageFromGallery} style={styles.photoActionSecondary}>
-                    <Text style={styles.photoActionSecondaryText}>{translations.chooseFromGallery}</Text>
+                  <Pressable
+                    onPress={pickServiceImageFromGallery}
+                    style={styles.photoActionSecondary}
+                  >
+                    <Text style={styles.photoActionSecondaryText}>
+                      {translations.chooseFromGallery}
+                    </Text>
                   </Pressable>
                 </View>
               )}
             </View>
             <View style={styles.fieldBlock}>
-              <Text style={styles.labelText}>{translations.serviceRequestDescription} *</Text>
+              <Text style={styles.labelText}>
+                {translations.serviceRequestDescription} *
+              </Text>
               <TextInput
                 value={serviceDescription}
                 onChangeText={(value) => {
                   setServiceDescription(value);
-                  setServiceRequestError('');
+                  setServiceRequestError("");
                 }}
                 multiline
                 maxLength={500}
                 placeholder={translations.describeProblem}
                 style={styles.descriptionInput}
               />
-              <Text style={styles.characterCount}>{serviceDescription.length} / 500</Text>
+              <Text style={styles.characterCount}>
+                {serviceDescription.length} / 500
+              </Text>
             </View>
             {serviceRequestError ? (
-              <Text accessibilityRole="alert" style={styles.readingError}>{serviceRequestError}</Text>
+              <Text accessibilityRole="alert" style={styles.readingError}>
+                {serviceRequestError}
+              </Text>
             ) : null}
             <Pressable
               disabled={serviceRequestSubmitting}
               onPress={() => void submitServiceRequest()}
-              style={[styles.primaryButton, serviceRequestSubmitting && styles.readingDisabledButton]}
+              style={[
+                styles.primaryButton,
+                serviceRequestSubmitting && styles.readingDisabledButton,
+              ]}
             >
               <Text style={styles.primaryButtonText}>
-                {serviceRequestSubmitting ? translations.submittingServiceRequest : translations.createRequest}
+                {serviceRequestSubmitting
+                  ? translations.submittingServiceRequest
+                  : translations.createRequest}
               </Text>
             </Pressable>
           </View>
@@ -2550,32 +3745,59 @@ export default function App() {
   const renderWebServiceRequestSubmitted = () => (
     <View style={styles.webDashboard}>
       <View style={styles.webMain}>
-        <View style={[styles.webTopBar, isCompactWeb && styles.webTopBarCompact]}>
+        <View
+          style={[styles.webTopBar, isCompactWeb && styles.webTopBarCompact]}
+        >
           {renderPageHeaderControls()}
           <View>
-            <Text style={styles.webPageTitle}>{translations.serviceRequestSubmitted}</Text>
+            <Text style={styles.webPageTitle}>
+              {translations.serviceRequestSubmitted}
+            </Text>
           </View>
           {renderPageBackButton()}
         </View>
         <View style={styles.webSuccessPage}>
-          <View style={styles.serviceSuccessIcon}><Text style={styles.serviceSuccessCheck}>✓</Text></View>
-          <Text style={[styles.heading, styles.serviceSuccessTitle]}>{translations.serviceRequestSubmitted}</Text>
-          <Text style={styles.serviceRequestId}>{createdServiceRequest?.id}</Text>
+          <View style={styles.serviceSuccessIcon}>
+            <Text style={styles.serviceSuccessCheck}>✓</Text>
+          </View>
+          <Text style={[styles.heading, styles.serviceSuccessTitle]}>
+            {translations.serviceRequestSubmitted}
+          </Text>
+          <Text style={styles.serviceRequestId}>
+            {createdServiceRequest?.id}
+          </Text>
           <Text style={styles.customerAddress}>
-            {createdServiceRequest?.customerName} · {translations.serviceRequestCustomerAccount} {createdServiceRequest?.accountNo}
+            {createdServiceRequest?.customerName} ·{" "}
+            {translations.serviceRequestCustomerAccount}{" "}
+            {createdServiceRequest?.accountNo}
           </Text>
           <Text style={styles.serviceProblemText}>
-            {createdServiceRequest ? getServiceProblemLabel(createdServiceRequest.problemType) : ''}
+            {createdServiceRequest
+              ? getServiceProblemLabel(createdServiceRequest.problemType)
+              : ""}
           </Text>
           <Text style={styles.servicePendingBadge}>
-            ⟳  {createdServiceRequest ? getServiceRequestStatusLabel(createdServiceRequest.status) : ''}
+            ⟳{" "}
+            {createdServiceRequest
+              ? getServiceRequestStatusLabel(createdServiceRequest.status)
+              : ""}
           </Text>
           <View style={styles.webSuccessActions}>
-            <Pressable onPress={() => setScreen('sr')} style={styles.primaryButton}>
-              <Text style={styles.primaryButtonText}>{translations.backToServiceRequests}</Text>
+            <Pressable
+              onPress={() => setScreen("sr")}
+              style={styles.primaryButton}
+            >
+              <Text style={styles.primaryButtonText}>
+                {translations.backToServiceRequests}
+              </Text>
             </Pressable>
-            <Pressable onPress={openCreateServiceRequest} style={styles.secondaryFooterButton}>
-              <Text style={styles.secondaryFooterText}>{translations.createAnotherServiceRequest}</Text>
+            <Pressable
+              onPress={openCreateServiceRequest}
+              style={styles.secondaryFooterButton}
+            >
+              <Text style={styles.secondaryFooterText}>
+                {translations.createAnotherServiceRequest}
+              </Text>
             </Pressable>
           </View>
           {renderWebPageFooter()}
@@ -2587,62 +3809,122 @@ export default function App() {
   const renderWebDetail = () => (
     <View style={styles.webDashboard}>
       <View style={styles.webMain}>
-        <View style={[styles.webTopBar, isCompactWeb && styles.webTopBarCompact]}>
+        <View
+          style={[styles.webTopBar, isCompactWeb && styles.webTopBarCompact]}
+        >
           {renderPageHeaderControls()}
           <View>
-            <Text style={styles.webBreadcrumb}>WORKSPACE  /  CUSTOMER</Text>
-            <Text style={styles.webPageTitle}>{translations.customerDetails}</Text>
+            <Text style={styles.webPageTitle}>
+              {translations.customerDetails}
+            </Text>
           </View>
           {renderPageBackButton()}
         </View>
         <ScrollView
           style={styles.webContent}
-          contentContainerStyle={[styles.webDetailContent, styles.webPageFooterSpace, isCompactWeb && styles.webDetailContentCompact]}
+          contentContainerStyle={[
+            styles.webDetailContent,
+            styles.webPageFooterSpace,
+            isCompactWeb && styles.webDetailContentCompact,
+          ]}
         >
           <View style={styles.customerSummaryCard}>
             <View style={styles.customerSummaryTop}>
               <View style={styles.customerTypeTags}>
-                {selectedCustomer.customerType ? <Text style={styles.customerTypeTag}>{translations.domestic}</Text> : null}
-                {selectedCustomer.meterType ? <Text style={styles.customerTypeTag}>{translations.metered}</Text> : null}
+                {selectedCustomer.customerType ? (
+                  <Text style={styles.customerTypeTag}>
+                    {translations.domestic}
+                  </Text>
+                ) : null}
+                {selectedCustomer.meterType ? (
+                  <Text style={styles.customerTypeTag}>
+                    {translations.metered}
+                  </Text>
+                ) : null}
               </View>
               <View style={styles.customerDue}>
-                <Text style={[styles.customerDueAmount, { color: selectedCustomer.color }]}>{selectedCustomer.amt}</Text>
+                <Text
+                  style={[
+                    styles.customerDueAmount,
+                    { color: selectedCustomer.color },
+                  ]}
+                >
+                  {selectedCustomer.amt}
+                </Text>
                 <Text style={styles.customerSummaryDueLabel}>
-                  {selectedCustomer.dueLabel === 'Due' ? translations.due : translations.noDue}
+                  {selectedCustomer.dueLabel === "Due"
+                    ? translations.due
+                    : translations.noDue}
                 </Text>
               </View>
             </View>
-            <Text style={styles.customerSummaryName}>{selectedCustomer.name}</Text>
-            <Text style={styles.customerSummaryText}>{selectedCustomer.detailAddress || selectedCustomer.addr}</Text>
-            <Text style={styles.customerSummaryText}>✆  {selectedCustomer.phone || translations.notOnFile}</Text>
+            <Text style={styles.customerSummaryName}>
+              {selectedCustomer.name}
+            </Text>
+            <Text style={styles.customerSummaryText}>
+              {selectedCustomer.detailAddress || selectedCustomer.addr}
+            </Text>
+            <Text style={styles.customerSummaryText}>
+              ✆ {selectedCustomer.phone || translations.notOnFile}
+            </Text>
           </View>
           <View style={styles.webDetailTabs}>
             <Pressable
-              onPress={() => setDetailTab('bill')}
-              style={detailTab === 'bill' ? styles.webDetailTabActive : styles.webDetailTab}
+              onPress={() => setDetailTab("bill")}
+              style={
+                detailTab === "bill"
+                  ? styles.webDetailTabActive
+                  : styles.webDetailTab
+              }
             >
-              <Text style={detailTab === 'bill' ? styles.webDetailTabTextActive : styles.webDetailTabText}>{translations.generateBill}</Text>
+              <Text
+                style={
+                  detailTab === "bill"
+                    ? styles.webDetailTabTextActive
+                    : styles.webDetailTabText
+                }
+              >
+                {translations.generateBill}
+              </Text>
             </Pressable>
             <Pressable
-              onPress={() => setDetailTab('history')}
-              style={detailTab === 'history' ? styles.webDetailTabActive : styles.webDetailTab}
+              onPress={() => setDetailTab("history")}
+              style={
+                detailTab === "history"
+                  ? styles.webDetailTabActive
+                  : styles.webDetailTab
+              }
             >
-              <Text style={detailTab === 'history' ? styles.webDetailTabTextActive : styles.webDetailTabText}>{translations.history}</Text>
+              <Text
+                style={
+                  detailTab === "history"
+                    ? styles.webDetailTabTextActive
+                    : styles.webDetailTabText
+                }
+              >
+                {translations.history}
+              </Text>
             </Pressable>
           </View>
-          {detailTab === 'bill' ? (
+          {detailTab === "bill" ? (
             <>
               <View style={styles.customerMetadataCard}>
                 {[
                   [translations.accountNumber, selectedCustomer.acc],
-                  [translations.area, selectedCustomer.area || '—'],
-                  [translations.ward, selectedCustomer.ward || '—'],
+                  [translations.area, selectedCustomer.area || "—"],
+                  [translations.ward, selectedCustomer.ward || "—"],
                   [translations.meterNo, selectedCustomer.meter],
-                  [translations.connectionSize, selectedCustomer.connectionSize || '—'],
+                  [
+                    translations.connectionSize,
+                    selectedCustomer.connectionSize || "—",
+                  ],
                 ].map(([label, value], index) => (
                   <View
                     key={label}
-                    style={[styles.customerMetadataRow, index === 4 && styles.customerMetadataRowLast]}
+                    style={[
+                      styles.customerMetadataRow,
+                      index === 4 && styles.customerMetadataRowLast,
+                    ]}
                   >
                     <Text style={styles.customerMetadataLabel}>{label}</Text>
                     <Text style={styles.customerMetadataValue}>{value}</Text>
@@ -2652,34 +3934,57 @@ export default function App() {
               {selectedCustomer.previousReading ? (
                 <View style={styles.previousReadingCard}>
                   <Text style={styles.previousReadingLabel}>
-                    {translations.previousReading} (m³){selectedCustomer.previousReadingDate ? ` · ${selectedCustomer.previousReadingDate}` : ''}
+                    {translations.previousReading} (m³)
+                    {selectedCustomer.previousReadingDate
+                      ? ` · ${selectedCustomer.previousReadingDate}`
+                      : ""}
                   </Text>
-                  <Text style={styles.previousReadingValue}>{selectedCustomer.previousReading}</Text>
+                  <Text style={styles.previousReadingValue}>
+                    {selectedCustomer.previousReading}
+                  </Text>
                 </View>
               ) : null}
               {selectedCustomer.nearbyDistance ? (
                 <View style={styles.customerNearbyNotice}>
                   <Text style={styles.customerNearbyText}>
-                    ✓  {translations.nearCustomer.replace('{distance}', selectedCustomer.nearbyDistance)}
+                    ✓{" "}
+                    {translations.nearCustomer.replace(
+                      "{distance}",
+                      selectedCustomer.nearbyDistance,
+                    )}
                   </Text>
                 </View>
               ) : null}
             </>
           ) : (
             <View style={styles.webPanel}>
-              <Text style={styles.historyText}>10 Mar 2026 — Reading taken successfully</Text>
-              <Text style={styles.historyText}>17 Feb 2026 — Meter inspection completed</Text>
-              <Text style={styles.historyText}>09 Jan 2026 — Complaint resolved</Text>
+              <Text style={styles.historyText}>
+                10 Mar 2026 — Reading taken successfully
+              </Text>
+              <Text style={styles.historyText}>
+                17 Feb 2026 — Meter inspection completed
+              </Text>
+              <Text style={styles.historyText}>
+                09 Jan 2026 — Complaint resolved
+              </Text>
             </View>
           )}
           {renderWebPageFooter()}
         </ScrollView>
         <View style={styles.customerDetailFooter}>
-          <Pressable onPress={openNewReadingForSelectedCustomer} style={styles.primaryButton}>
-            <Text style={styles.primaryButtonText}>＋  New Reading</Text>
+          <Pressable
+            onPress={openNewReadingForSelectedCustomer}
+            style={styles.primaryButton}
+          >
+            <Text style={styles.primaryButtonText}>＋ New Reading</Text>
           </Pressable>
-          <Pressable onPress={beginReading} style={styles.secondaryFooterButton}>
-            <Text style={styles.secondaryFooterText}>◉  {translations.takePhoto}</Text>
+          <Pressable
+            onPress={beginReading}
+            style={styles.secondaryFooterButton}
+          >
+            <Text style={styles.secondaryFooterText}>
+              ◉ {translations.takePhoto}
+            </Text>
           </Pressable>
         </View>
       </View>
@@ -2690,57 +3995,115 @@ export default function App() {
     <View style={styles.screenShellDark}>
       <View style={styles.topBar}>
         {renderPageHeaderControls()}
-        <Text style={[styles.heading, styles.topBarTitle]}>{translations.customerDetails}</Text>
+        <Text style={[styles.heading, styles.topBarTitle]}>
+          {translations.customerDetails}
+        </Text>
         {renderPageBackButton()}
       </View>
 
       <View style={styles.tabRowDetail}>
         <Pressable
-          onPress={() => setDetailTab('bill')}
-          style={detailTab === 'bill' ? styles.tabItemActiveDetail : styles.tabItemInactiveDetail}
+          onPress={() => setDetailTab("bill")}
+          style={
+            detailTab === "bill"
+              ? styles.tabItemActiveDetail
+              : styles.tabItemInactiveDetail
+          }
         >
-          <Text style={detailTab === 'bill' ? styles.tabTextActive : styles.tabTextInactive}>{translations.generateBill}</Text>
+          <Text
+            style={
+              detailTab === "bill"
+                ? styles.tabTextActive
+                : styles.tabTextInactive
+            }
+          >
+            {translations.generateBill}
+          </Text>
         </Pressable>
         <Pressable
-          onPress={() => setDetailTab('history')}
-          style={detailTab === 'history' ? styles.tabItemActiveDetail : styles.tabItemInactiveDetail}
+          onPress={() => setDetailTab("history")}
+          style={
+            detailTab === "history"
+              ? styles.tabItemActiveDetail
+              : styles.tabItemInactiveDetail
+          }
         >
-          <Text style={detailTab === 'history' ? styles.tabTextActive : styles.tabTextInactive}>{translations.history}</Text>
+          <Text
+            style={
+              detailTab === "history"
+                ? styles.tabTextActive
+                : styles.tabTextInactive
+            }
+          >
+            {translations.history}
+          </Text>
         </Pressable>
       </View>
 
-      <ScrollView style={styles.detailScroll} contentContainerStyle={styles.detailContent}>
+      <ScrollView
+        style={styles.detailScroll}
+        contentContainerStyle={styles.detailContent}
+      >
         <View style={styles.customerSummaryCard}>
           <View style={styles.customerSummaryTop}>
             <View style={styles.customerTypeTags}>
-              {selectedCustomer.customerType ? <Text style={styles.customerTypeTag}>{translations.domestic}</Text> : null}
-              {selectedCustomer.meterType ? <Text style={styles.customerTypeTag}>{translations.metered}</Text> : null}
+              {selectedCustomer.customerType ? (
+                <Text style={styles.customerTypeTag}>
+                  {translations.domestic}
+                </Text>
+              ) : null}
+              {selectedCustomer.meterType ? (
+                <Text style={styles.customerTypeTag}>
+                  {translations.metered}
+                </Text>
+              ) : null}
             </View>
             <View style={styles.customerDue}>
-              <Text style={[styles.customerDueAmount, { color: selectedCustomer.color }]}>{selectedCustomer.amt}</Text>
+              <Text
+                style={[
+                  styles.customerDueAmount,
+                  { color: selectedCustomer.color },
+                ]}
+              >
+                {selectedCustomer.amt}
+              </Text>
               <Text style={styles.customerSummaryDueLabel}>
-                {selectedCustomer.dueLabel === 'Due' ? translations.due : translations.noDue}
+                {selectedCustomer.dueLabel === "Due"
+                  ? translations.due
+                  : translations.noDue}
               </Text>
             </View>
           </View>
-          <Text style={styles.customerSummaryName}>{selectedCustomer.name}</Text>
-          <Text style={styles.customerSummaryText}>{selectedCustomer.detailAddress || selectedCustomer.addr}</Text>
-          <Text style={styles.customerSummaryText}>✆  {selectedCustomer.phone || translations.notOnFile}</Text>
+          <Text style={styles.customerSummaryName}>
+            {selectedCustomer.name}
+          </Text>
+          <Text style={styles.customerSummaryText}>
+            {selectedCustomer.detailAddress || selectedCustomer.addr}
+          </Text>
+          <Text style={styles.customerSummaryText}>
+            ✆ {selectedCustomer.phone || translations.notOnFile}
+          </Text>
         </View>
 
-        {detailTab === 'bill' ? (
+        {detailTab === "bill" ? (
           <>
             <View style={styles.customerMetadataCard}>
               {[
                 [translations.accountNumber, selectedCustomer.acc],
-                [translations.area, selectedCustomer.area || '—'],
-                [translations.ward, selectedCustomer.ward || '—'],
+                [translations.area, selectedCustomer.area || "—"],
+                [translations.ward, selectedCustomer.ward || "—"],
                 [translations.meterNo, selectedCustomer.meter],
-                [translations.connectionSize, selectedCustomer.connectionSize || '—'],
+                [
+                  translations.connectionSize,
+                  selectedCustomer.connectionSize || "—",
+                ],
               ].map(([label, value], index) => (
                 <View
                   key={label}
-                  style={[styles.customerMetadataRow, index === 4 && styles.customerMetadataRowLast]}
+                  style={[
+                    styles.customerMetadataRow,
+                    index === 4 && styles.customerMetadataRowLast,
+                  ]}
                 >
                   <Text style={styles.customerMetadataLabel}>{label}</Text>
                   <Text style={styles.customerMetadataValue}>{value}</Text>
@@ -2750,43 +4113,77 @@ export default function App() {
             {selectedCustomer.previousReading ? (
               <View style={styles.previousReadingCard}>
                 <Text style={styles.previousReadingLabel}>
-                  {translations.previousReading} (m³){selectedCustomer.previousReadingDate ? ` · ${selectedCustomer.previousReadingDate}` : ''}
+                  {translations.previousReading} (m³)
+                  {selectedCustomer.previousReadingDate
+                    ? ` · ${selectedCustomer.previousReadingDate}`
+                    : ""}
                 </Text>
-                <Text style={styles.previousReadingValue}>{selectedCustomer.previousReading}</Text>
+                <Text style={styles.previousReadingValue}>
+                  {selectedCustomer.previousReading}
+                </Text>
               </View>
             ) : null}
             {selectedCustomer.nearbyDistance ? (
               <View style={styles.customerNearbyNotice}>
                 <Text style={styles.customerNearbyText}>
-                  ✓  {translations.nearCustomer.replace('{distance}', selectedCustomer.nearbyDistance)}
+                  ✓{" "}
+                  {translations.nearCustomer.replace(
+                    "{distance}",
+                    selectedCustomer.nearbyDistance,
+                  )}
                 </Text>
               </View>
             ) : null}
           </>
         ) : (
           <View style={styles.detailCard}>
-            <Text style={styles.historyText}>10 Mar 2026 — Reading taken successfully</Text>
-            <Text style={styles.historyText}>17 Feb 2026 — Meter inspection completed</Text>
-            <Text style={styles.historyText}>09 Jan 2026 — Complaint resolved</Text>
+            <Text style={styles.historyText}>
+              10 Mar 2026 — Reading taken successfully
+            </Text>
+            <Text style={styles.historyText}>
+              17 Feb 2026 — Meter inspection completed
+            </Text>
+            <Text style={styles.historyText}>
+              09 Jan 2026 — Complaint resolved
+            </Text>
           </View>
         )}
       </ScrollView>
       <View style={styles.customerDetailFooter}>
-        <Pressable onPress={openNewReadingForSelectedCustomer} style={styles.primaryButton}>
-          <Text style={styles.primaryButtonText}>＋  New Reading</Text>
+        <Pressable
+          onPress={openNewReadingForSelectedCustomer}
+          style={styles.primaryButton}
+        >
+          <Text style={styles.primaryButtonText}>＋ New Reading</Text>
         </Pressable>
         <Pressable onPress={beginReading} style={styles.secondaryFooterButton}>
-          <Text style={styles.secondaryFooterText}>◉  {translations.takePhoto}</Text>
+          <Text style={styles.secondaryFooterText}>
+            ◉ {translations.takePhoto}
+          </Text>
         </Pressable>
       </View>
     </View>
   );
 
   const renderCamera = () => {
-
-    const activePhoto = cameraTarget === 'newReading' ? newReadingPhoto : cameraTarget === 'service' ? servicePhoto : cameraPhoto;
-    const returnScreen = cameraTarget === 'newReading' ? 'newReading' : cameraTarget === 'service' ? 'srnew' : 'detail';
-    const nextScreen = cameraTarget === 'newReading' ? 'newReading' : cameraTarget === 'service' ? 'srnew' : 'enter';
+    const activePhoto =
+      cameraTarget === "newReading"
+        ? newReadingPhoto
+        : cameraTarget === "service"
+          ? servicePhoto
+          : cameraPhoto;
+    const returnScreen =
+      cameraTarget === "newReading"
+        ? "newReading"
+        : cameraTarget === "service"
+          ? "srnew"
+          : "detail";
+    const nextScreen =
+      cameraTarget === "newReading"
+        ? "newReading"
+        : cameraTarget === "service"
+          ? "srnew"
+          : "enter";
 
     return (
       <ScrollView
@@ -2796,21 +4193,34 @@ export default function App() {
         <View style={styles.cameraTopBar}>
           {renderPageHeaderControls()}
           {renderPageBackButton()}
-          <Pressable onPress={() => setScreen(returnScreen)} style={styles.cameraCancelButton}>
-            <Text style={styles.cameraCancelText}>×  Cancel</Text>
+          <Pressable
+            onPress={() => setScreen(returnScreen)}
+            style={styles.cameraCancelButton}
+          >
+            <Text style={styles.cameraCancelText}>× Cancel</Text>
           </Pressable>
           <Pressable
             accessibilityRole="button"
-            onPress={() => setCameraFacing((facing) => (facing === 'back' ? 'front' : 'back'))}
+            onPress={() =>
+              setCameraFacing((facing) =>
+                facing === "back" ? "front" : "back",
+              )
+            }
             style={styles.cameraCancelButton}
           >
-            <Text style={styles.cameraFlashText}>↻  Flip</Text>
+            <Text style={styles.cameraFlashText}>↻ Flip</Text>
           </Pressable>
         </View>
-        <Text style={styles.cameraInstruction}>Fit the whole meter face inside the frame</Text>
+        <Text style={styles.cameraInstruction}>
+          Fit the whole meter face inside the frame
+        </Text>
         <View style={styles.cameraPreview}>
           {activePhoto ? (
-            <Image source={{ uri: activePhoto.uri }} style={styles.cameraPreviewLive} resizeMode="contain" />
+            <Image
+              source={{ uri: activePhoto.uri }}
+              style={styles.cameraPreviewLive}
+              resizeMode="contain"
+            />
           ) : cameraPermission?.granted && cameraAvailable ? (
             <CameraView
               ref={cameraRef}
@@ -2818,7 +4228,9 @@ export default function App() {
               onCameraReady={() => setCameraReady(true)}
               onMountError={(event) => {
                 setCameraReady(false);
-                setCameraError(event.message || translations.cameraNotAvailable);
+                setCameraError(
+                  event.message || translations.cameraNotAvailable,
+                );
               }}
               style={styles.cameraPreviewLive}
             />
@@ -2831,23 +4243,43 @@ export default function App() {
                     ? translations.cameraPermissionDenied
                     : translations.cameraPreviewUnavailable}
               </Text>
-              {!cameraPermission?.granted && cameraPermission?.canAskAgain !== false ? (
-                <Pressable onPress={allowCamera} style={styles.cameraPermissionButton}>
-                  <Text style={styles.cameraPermissionButtonText}>{translations.cameraPermissionAction}</Text>
+              {!cameraPermission?.granted &&
+              cameraPermission?.canAskAgain !== false ? (
+                <Pressable
+                  onPress={allowCamera}
+                  style={styles.cameraPermissionButton}
+                >
+                  <Text style={styles.cameraPermissionButtonText}>
+                    {translations.cameraPermissionAction}
+                  </Text>
                 </Pressable>
               ) : null}
             </View>
           )}
         </View>
         <View style={styles.cameraBottom}>
-          {cameraError ? <Text accessibilityRole="alert" style={styles.cameraErrorText}>{cameraError}</Text> : null}
+          {cameraError ? (
+            <Text accessibilityRole="alert" style={styles.cameraErrorText}>
+              {cameraError}
+            </Text>
+          ) : null}
           {activePhoto ? (
             <>
-              <Pressable onPress={retakeMeterPhoto} style={styles.cameraSecondaryButton}>
-                <Text style={styles.cameraSecondaryButtonText}>{translations.cameraRetakePhoto}</Text>
+              <Pressable
+                onPress={retakeMeterPhoto}
+                style={styles.cameraSecondaryButton}
+              >
+                <Text style={styles.cameraSecondaryButtonText}>
+                  {translations.cameraRetakePhoto}
+                </Text>
               </Pressable>
-              <Pressable onPress={() => setScreen(nextScreen)} style={styles.cameraContinueButton}>
-                <Text style={styles.cameraContinueButtonText}>{translations.cameraUsePhoto}</Text>
+              <Pressable
+                onPress={() => setScreen(nextScreen)}
+                style={styles.cameraContinueButton}
+              >
+                <Text style={styles.cameraContinueButtonText}>
+                  {translations.cameraUsePhoto}
+                </Text>
               </Pressable>
             </>
           ) : (
@@ -2857,13 +4289,23 @@ export default function App() {
                   accessibilityRole="button"
                   disabled={!cameraReady}
                   onPress={captureMeterPhoto}
-                  style={[styles.cameraContinueButton, !cameraReady && styles.cameraDisabledButton]}
+                  style={[
+                    styles.cameraContinueButton,
+                    !cameraReady && styles.cameraDisabledButton,
+                  ]}
                 >
-                  <Text style={styles.cameraContinueButtonText}>{translations.cameraTakePhoto}</Text>
+                  <Text style={styles.cameraContinueButtonText}>
+                    {translations.cameraTakePhoto}
+                  </Text>
                 </Pressable>
               ) : null}
-              <Pressable onPress={() => setScreen(nextScreen)} style={styles.cameraSecondaryButton}>
-                <Text style={styles.cameraSecondaryButtonText}>{translations.continueWithoutPhoto}</Text>
+              <Pressable
+                onPress={() => setScreen(nextScreen)}
+                style={styles.cameraSecondaryButton}
+              >
+                <Text style={styles.cameraSecondaryButtonText}>
+                  {translations.continueWithoutPhoto}
+                </Text>
               </Pressable>
             </>
           )}
@@ -2876,13 +4318,21 @@ export default function App() {
     <>
       <View style={styles.readingPreviousCard}>
         <Text style={styles.readingPreviousLabel}>
-          {translations.previousReadingValue} · {selectedCustomer.previousReadingDate || '31/08/2026'}
+          {translations.previousReadingValue} ·{" "}
+          {selectedCustomer.previousReadingDate || "31/08/2026"}
         </Text>
-        <Text style={styles.readingPreviousValue}>{previousReadingValue.toLocaleString('en-US', { minimumFractionDigits: 2 })} m³</Text>
+        <Text style={styles.readingPreviousValue}>
+          {previousReadingValue.toLocaleString("en-US", {
+            minimumFractionDigits: 2,
+          })}{" "}
+          m³
+        </Text>
       </View>
 
       <View style={styles.readingInputCard}>
-        <Text style={styles.readingSectionLabel}>{translations.currentReadingLabel}</Text>
+        <Text style={styles.readingSectionLabel}>
+          {translations.currentReadingLabel}
+        </Text>
         <TextInput
           value={reading}
           onChangeText={(value) => {
@@ -2896,72 +4346,114 @@ export default function App() {
         <Text style={styles.readingHelper}>{translations.typeMeterValue}</Text>
       </View>
 
-      {reading.trim() !== '' && !Number.isFinite(currentReadingValue) ? (
-        <Text accessibilityRole="alert" style={styles.readingError}>{translations.readingMustBeNumeric}</Text>
+      {reading.trim() !== "" && !Number.isFinite(currentReadingValue) ? (
+        <Text accessibilityRole="alert" style={styles.readingError}>
+          {translations.readingMustBeNumeric}
+        </Text>
       ) : null}
-      {reading.trim() !== '' && Number.isFinite(currentReadingValue) && currentReadingValue < previousReadingValue ? (
+      {reading.trim() !== "" &&
+      Number.isFinite(currentReadingValue) &&
+      currentReadingValue < previousReadingValue ? (
         <View style={styles.readingWarningCard}>
-          <Text style={styles.readingWarningTitle}>✕  {translations.readingLowerThanPrevious}</Text>
+          <Text style={styles.readingWarningTitle}>
+            ✕ {translations.readingLowerThanPrevious}
+          </Text>
           <Text style={styles.readingWarningText}>
-            {translations.previousReadingValue}: {previousReadingValue.toLocaleString('en-US', { minimumFractionDigits: 2 })} m³
+            {translations.previousReadingValue}:{" "}
+            {previousReadingValue.toLocaleString("en-US", {
+              minimumFractionDigits: 2,
+            })}{" "}
+            m³
           </Text>
         </View>
       ) : null}
       {isHighReading ? (
         <View style={styles.readingWarningCard}>
-          <Text style={styles.readingWarningTitle}>⚠  {translations.highUseWarning}</Text>
+          <Text style={styles.readingWarningTitle}>
+            ⚠ {translations.highUseWarning}
+          </Text>
           <Pressable
             accessibilityRole="checkbox"
             accessibilityState={{ checked: readingConfirmed }}
             onPress={() => setReadingConfirmed((checked) => !checked)}
             style={styles.readingConfirmRow}
           >
-            <Text style={styles.readingCheckbox}>{readingConfirmed ? '☑' : '☐'}</Text>
-            <Text style={styles.readingWarningText}>{translations.checkedReading}</Text>
+            <Text style={styles.readingCheckbox}>
+              {readingConfirmed ? "☑" : "☐"}
+            </Text>
+            <Text style={styles.readingWarningText}>
+              {translations.checkedReading}
+            </Text>
           </Pressable>
         </View>
       ) : null}
       {isZeroReading ? (
         <View style={styles.readingWarningCard}>
-          <Text style={styles.readingWarningTitle}>⚠  {translations.zeroUseWarning}</Text>
+          <Text style={styles.readingWarningTitle}>
+            ⚠ {translations.zeroUseWarning}
+          </Text>
           <Pressable
             accessibilityRole="checkbox"
             accessibilityState={{ checked: readingConfirmed }}
             onPress={() => setReadingConfirmed((checked) => !checked)}
             style={styles.readingConfirmRow}
           >
-            <Text style={styles.readingCheckbox}>{readingConfirmed ? '☑' : '☐'}</Text>
-            <Text style={styles.readingWarningText}>{translations.checkedReading}</Text>
+            <Text style={styles.readingCheckbox}>
+              {readingConfirmed ? "☑" : "☐"}
+            </Text>
+            <Text style={styles.readingWarningText}>
+              {translations.checkedReading}
+            </Text>
           </Pressable>
         </View>
       ) : null}
 
       <View style={styles.readingUsageCard}>
         <View>
-          <Text style={styles.readingUsageLabel}>{translations.useThisCycle} (m³)</Text>
-          <Text style={styles.readingHelper}>{translations.typeMeterValue}</Text>
+          <Text style={styles.readingUsageLabel}>
+            {translations.useThisCycle} (m³)
+          </Text>
+          <Text style={styles.readingHelper}>
+            {translations.typeMeterValue}
+          </Text>
         </View>
         <Text style={styles.readingUsageValue}>
-          {readingIsValid ? cycleUsage.toLocaleString('en-US', { minimumFractionDigits: 2 }) : '—'}
+          {readingIsValid
+            ? cycleUsage.toLocaleString("en-US", { minimumFractionDigits: 2 })
+            : "—"}
         </Text>
       </View>
 
       <View style={styles.readingConditionCard}>
-        <Text style={styles.readingSectionLabel}>{translations.meterCondition}</Text>
+        <Text style={styles.readingSectionLabel}>
+          {translations.meterCondition}
+        </Text>
         <View style={styles.readingConditionOptions}>
-          {([
-            ['normal', translations.workingNormally],
-            ['damaged', translations.meterDamaged],
-            ['stopped', translations.meterStopped],
-          ] as const).map(([condition, label]) => (
+          {(
+            [
+              ["normal", translations.workingNormally],
+              ["damaged", translations.meterDamaged],
+              ["stopped", translations.meterStopped],
+            ] as const
+          ).map(([condition, label]) => (
             <Pressable
               key={condition}
               accessibilityRole="radio"
               accessibilityState={{ selected: meterCondition === condition }}
               onPress={() => setMeterCondition(condition)}
-              style={[styles.readingConditionOption, meterCondition === condition && styles.readingConditionOptionSelected]}
+              style={[
+                styles.readingConditionOption,
+                meterCondition === condition &&
+                  styles.readingConditionOptionSelected,
+              ]}
             >
-              <Text style={[styles.readingConditionText, meterCondition === condition && styles.readingConditionTextSelected]}>
+              <Text
+                style={[
+                  styles.readingConditionText,
+                  meterCondition === condition &&
+                    styles.readingConditionTextSelected,
+                ]}
+              >
                 {label}
               </Text>
             </Pressable>
@@ -2980,27 +4472,45 @@ export default function App() {
           style={styles.readingRemarksInput}
         />
         {isHighReading && readingRemarks.trim().length === 0 ? (
-          <Text accessibilityRole="alert" style={styles.readingError}>{translations.remarksRequired}</Text>
+          <Text accessibilityRole="alert" style={styles.readingError}>
+            {translations.remarksRequired}
+          </Text>
         ) : null}
       </View>
     </>
   );
 
-  const renderReadingEntry = () => (
+  const renderReadingEntry = () =>
     isWeb ? (
       <View style={styles.webDashboard}>
         <View style={styles.webMain}>
-          <View style={[styles.webTopBar, isCompactWeb && styles.webTopBarCompact]}>
+          <View
+            style={[styles.webTopBar, isCompactWeb && styles.webTopBarCompact]}
+          >
             {renderPageHeaderControls()}
             <View>
-              <Text style={styles.webPageTitle}>{translations.currentReading}</Text>
+              <Text style={styles.webPageTitle}>
+                {translations.currentReading}
+              </Text>
             </View>
             {renderPageBackButton()}
           </View>
-          <ScrollView style={styles.webContent} contentContainerStyle={[styles.readingWorkflowContent, styles.webPageFooterSpace, isCompactWeb && styles.webContentInnerCompact]}>
+          <ScrollView
+            style={styles.webContent}
+            contentContainerStyle={[
+              styles.readingWorkflowContent,
+              styles.webPageFooterSpace,
+              isCompactWeb && styles.webContentInnerCompact,
+            ]}
+          >
             <View style={styles.readingCustomerBanner}>
-              <Text style={styles.readingCustomerName}>{selectedCustomer.name}</Text>
-              <Text style={styles.readingHelper}>{selectedCustomer.acc} · {translations.meter} {selectedCustomer.meter}</Text>
+              <Text style={styles.readingCustomerName}>
+                {selectedCustomer.name}
+              </Text>
+              <Text style={styles.readingHelper}>
+                {selectedCustomer.acc} · {translations.meter}{" "}
+                {selectedCustomer.meter}
+              </Text>
             </View>
             {renderReadingEntryContent()}
             {renderWebPageFooter()}
@@ -3008,10 +4518,15 @@ export default function App() {
           <View style={styles.customerDetailFooter}>
             <Pressable
               disabled={!canReviewReading}
-              onPress={() => setScreen('review')}
-              style={[styles.primaryButton, !canReviewReading && styles.readingDisabledButton]}
+              onPress={() => setScreen("review")}
+              style={[
+                styles.primaryButton,
+                !canReviewReading && styles.readingDisabledButton,
+              ]}
             >
-              <Text style={styles.primaryButtonText}>{translations.reviewReading}</Text>
+              <Text style={styles.primaryButtonText}>
+                {translations.reviewReading}
+              </Text>
             </Pressable>
           </View>
         </View>
@@ -3020,40 +4535,72 @@ export default function App() {
       <View style={styles.screenShellDark}>
         <View style={styles.topBar}>
           {renderPageHeaderControls()}
-          <Text style={[styles.heading, styles.topBarTitle]}>{translations.currentReading}</Text>
+          <Text style={[styles.heading, styles.topBarTitle]}>
+            {translations.currentReading}
+          </Text>
           {renderPageBackButton()}
         </View>
-        <ScrollView style={styles.readingWorkflowScroll} contentContainerStyle={styles.readingWorkflowContent}>
+        <ScrollView
+          style={styles.readingWorkflowScroll}
+          contentContainerStyle={styles.readingWorkflowContent}
+        >
           <View style={styles.readingCustomerBanner}>
-            <Text style={styles.readingCustomerName}>{selectedCustomer.name}</Text>
-            <Text style={styles.readingHelper}>{selectedCustomer.acc} · {translations.meter} {selectedCustomer.meter}</Text>
+            <Text style={styles.readingCustomerName}>
+              {selectedCustomer.name}
+            </Text>
+            <Text style={styles.readingHelper}>
+              {selectedCustomer.acc} · {translations.meter}{" "}
+              {selectedCustomer.meter}
+            </Text>
           </View>
           {renderReadingEntryContent()}
         </ScrollView>
         <View style={styles.customerDetailFooter}>
           <Pressable
             disabled={!canReviewReading}
-            onPress={() => setScreen('review')}
-            style={[styles.primaryButton, !canReviewReading && styles.readingDisabledButton]}
+            onPress={() => setScreen("review")}
+            style={[
+              styles.primaryButton,
+              !canReviewReading && styles.readingDisabledButton,
+            ]}
           >
-            <Text style={styles.primaryButtonText}>{translations.reviewReading}</Text>
+            <Text style={styles.primaryButtonText}>
+              {translations.reviewReading}
+            </Text>
           </Pressable>
         </View>
       </View>
-    )
-  );
+    );
 
   const renderReviewContent = () => (
     <View style={styles.readingReviewCard}>
       <View style={styles.readingReviewCustomer}>
         <Text style={styles.readingCustomerName}>{selectedCustomer.name}</Text>
-        <Text style={styles.readingHelper}>{selectedCustomer.acc} · {translations.meter} {selectedCustomer.meter}</Text>
+        <Text style={styles.readingHelper}>
+          {selectedCustomer.acc} · {translations.meter} {selectedCustomer.meter}
+        </Text>
       </View>
       {[
-        [translations.previousReadingValue, `${previousReadingValue.toLocaleString('en-US', { minimumFractionDigits: 2 })} m³`],
-        [translations.readingValue, `${currentReadingValue.toLocaleString('en-US', { minimumFractionDigits: 2 })} m³`],
-        [translations.useThisCycle, `${cycleUsage.toLocaleString('en-US', { minimumFractionDigits: 2 })} m³`],
-        [translations.meterCondition, meterCondition === 'normal' ? translations.workingNormally : meterCondition === 'damaged' ? translations.meterDamaged : translations.meterStopped],
+        [
+          translations.previousReadingValue,
+          `${previousReadingValue.toLocaleString("en-US", { minimumFractionDigits: 2 })} m³`,
+        ],
+        [
+          translations.readingValue,
+          `${currentReadingValue.toLocaleString("en-US", { minimumFractionDigits: 2 })} m³`,
+        ],
+        [
+          translations.useThisCycle,
+          `${cycleUsage.toLocaleString("en-US", { minimumFractionDigits: 2 })} m³`,
+        ],
+        [
+          translations.meterCondition,
+          meterCondition === "normal"
+            ? translations.workingNormally
+            : meterCondition === "damaged"
+              ? translations.meterDamaged
+              : translations.meterStopped,
+        ],
       ].map(([label, value]) => (
         <View key={label} style={styles.readingReviewRow}>
           <Text style={styles.readingReviewLabel}>{label}</Text>
@@ -3066,28 +4613,49 @@ export default function App() {
           <Text style={styles.readingReviewValue}>{readingRemarks}</Text>
         </View>
       ) : null}
-      {cameraPhoto ? <Image source={{ uri: cameraPhoto.uri }} style={styles.readingPhotoThumbnail} resizeMode="cover" /> : null}
+      {cameraPhoto ? (
+        <Image
+          source={{ uri: cameraPhoto.uri }}
+          style={styles.readingPhotoThumbnail}
+          resizeMode="cover"
+        />
+      ) : null}
     </View>
   );
 
-  const renderReadingReview = () => (
+  const renderReadingReview = () =>
     isWeb ? (
       <View style={styles.webDashboard}>
         <View style={styles.webMain}>
-          <View style={[styles.webTopBar, isCompactWeb && styles.webTopBarCompact]}>
+          <View
+            style={[styles.webTopBar, isCompactWeb && styles.webTopBarCompact]}
+          >
             {renderPageHeaderControls()}
             <View>
-              <Text style={styles.webPageTitle}>{translations.reviewReading}</Text>
+              <Text style={styles.webPageTitle}>
+                {translations.reviewReading}
+              </Text>
             </View>
             {renderPageBackButton()}
           </View>
-          <ScrollView style={styles.webContent} contentContainerStyle={[styles.readingWorkflowContent, styles.webPageFooterSpace]}>
+          <ScrollView
+            style={styles.webContent}
+            contentContainerStyle={[
+              styles.readingWorkflowContent,
+              styles.webPageFooterSpace,
+            ]}
+          >
             {renderReviewContent()}
             {renderWebPageFooter()}
           </ScrollView>
           <View style={styles.customerDetailFooter}>
-            <Pressable onPress={() => setScreen('saved')} style={styles.primaryButton}>
-              <Text style={styles.primaryButtonText}>{translations.saveReading}</Text>
+            <Pressable
+              onPress={() => setScreen("saved")}
+              style={styles.primaryButton}
+            >
+              <Text style={styles.primaryButtonText}>
+                {translations.saveReading}
+              </Text>
             </Pressable>
           </View>
         </View>
@@ -3096,43 +4664,60 @@ export default function App() {
       <View style={styles.screenShellDark}>
         <View style={styles.topBar}>
           {renderPageHeaderControls()}
-          <Text style={[styles.heading, styles.topBarTitle]}>{translations.reviewReading}</Text>
+          <Text style={[styles.heading, styles.topBarTitle]}>
+            {translations.reviewReading}
+          </Text>
           {renderPageBackButton()}
         </View>
-        <ScrollView style={styles.readingWorkflowScroll} contentContainerStyle={styles.readingWorkflowContent}>
+        <ScrollView
+          style={styles.readingWorkflowScroll}
+          contentContainerStyle={styles.readingWorkflowContent}
+        >
           {renderReviewContent()}
         </ScrollView>
         <View style={styles.customerDetailFooter}>
-          <Pressable onPress={() => setScreen('saved')} style={styles.primaryButton}>
-            <Text style={styles.primaryButtonText}>{translations.saveReading}</Text>
+          <Pressable
+            onPress={() => setScreen("saved")}
+            style={styles.primaryButton}
+          >
+            <Text style={styles.primaryButtonText}>
+              {translations.saveReading}
+            </Text>
           </Pressable>
         </View>
       </View>
-    )
-  );
+    );
 
   const goToNextCustomer = () => {
     if (assignedCustomers.length === 0) return;
-    const currentIndex = assignedCustomers.findIndex((customer) => customer.id === selectedCustomer.id);
-    const nextCustomer = assignedCustomers[(currentIndex + 1) % assignedCustomers.length];
+    const currentIndex = assignedCustomers.findIndex(
+      (customer) => customer.id === selectedCustomer.id,
+    );
+    const nextCustomer =
+      assignedCustomers[(currentIndex + 1) % assignedCustomers.length];
     setSelectedCustomer(nextCustomer);
     const nextPreviousReading = Number(
-      nextCustomer.previousReading?.replace(/,/g, '')
-      || '4295',
+      nextCustomer.previousReading?.replace(/,/g, "") || "4295",
     );
     setReading((nextPreviousReading + 82).toFixed(2));
-    setReadingRemarks('');
+    setReadingRemarks("");
     setReadingConfirmed(false);
-    setMeterCondition('normal');
-    setScreen('detail');
+    setMeterCondition("normal");
+    setScreen("detail");
   };
 
   const renderReadingSaved = () => {
     const content = (
       <View style={styles.readingSavedCard}>
-        <View style={styles.serviceSuccessIcon}><Text style={styles.serviceSuccessCheck}>✓</Text></View>
-        <Text style={[styles.heading, styles.serviceSuccessTitle]}>{translations.readingSaved}</Text>
-        <Text style={styles.readingSavedUse}>{cycleUsage.toLocaleString('en-US', { minimumFractionDigits: 2 })} m³</Text>
+        <View style={styles.serviceSuccessIcon}>
+          <Text style={styles.serviceSuccessCheck}>✓</Text>
+        </View>
+        <Text style={[styles.heading, styles.serviceSuccessTitle]}>
+          {translations.readingSaved}
+        </Text>
+        <Text style={styles.readingSavedUse}>
+          {cycleUsage.toLocaleString("en-US", { minimumFractionDigits: 2 })} m³
+        </Text>
         <View style={styles.readingSavedBillRow}>
           <Text style={styles.readingReviewLabel}>Water charge (example)</Text>
           <Text style={styles.readingReviewValue}>৳1,697</Text>
@@ -3141,30 +4726,49 @@ export default function App() {
           <Text style={styles.readingReviewLabel}>Previous due</Text>
           <Text style={styles.readingReviewValue}>{selectedCustomer.amt}</Text>
         </View>
-        <Text style={styles.readingHelper}>{translations.readingSavedOffline}</Text>
+        <Text style={styles.readingHelper}>
+          {translations.readingSavedOffline}
+        </Text>
       </View>
     );
 
     return isWeb ? (
       <View style={styles.webDashboard}>
         <View style={styles.webMain}>
-          <View style={[styles.webTopBar, isCompactWeb && styles.webTopBarCompact]}>
+          <View
+            style={[styles.webTopBar, isCompactWeb && styles.webTopBarCompact]}
+          >
             {renderPageHeaderControls()}
             <View>
-              <Text style={styles.webPageTitle}>{translations.readingSaved}</Text>
+              <Text style={styles.webPageTitle}>
+                {translations.readingSaved}
+              </Text>
             </View>
             {renderPageBackButton()}
           </View>
-          <ScrollView style={styles.webContent} contentContainerStyle={[styles.readingWorkflowContent, styles.webPageFooterSpace]}>
+          <ScrollView
+            style={styles.webContent}
+            contentContainerStyle={[
+              styles.readingWorkflowContent,
+              styles.webPageFooterSpace,
+            ]}
+          >
             {content}
             {renderWebPageFooter()}
           </ScrollView>
           <View style={styles.readingSavedActions}>
             <Pressable onPress={goToNextCustomer} style={styles.primaryButton}>
-              <Text style={styles.primaryButtonText}>{translations.nextCustomer}</Text>
+              <Text style={styles.primaryButtonText}>
+                {translations.nextCustomer}
+              </Text>
             </Pressable>
-            <Pressable onPress={() => setScreen('list')} style={styles.secondaryFooterButton}>
-              <Text style={styles.secondaryFooterText}>{translations.backToDashboard}</Text>
+            <Pressable
+              onPress={() => setScreen("list")}
+              style={styles.secondaryFooterButton}
+            >
+              <Text style={styles.secondaryFooterText}>
+                {translations.backToDashboard}
+              </Text>
             </Pressable>
           </View>
         </View>
@@ -3173,16 +4777,30 @@ export default function App() {
       <View style={styles.screenShellDark}>
         <View style={styles.topBar}>
           {renderPageHeaderControls()}
-          <Text style={[styles.heading, styles.topBarTitle]}>{translations.readingSaved}</Text>
+          <Text style={[styles.heading, styles.topBarTitle]}>
+            {translations.readingSaved}
+          </Text>
           {renderPageBackButton()}
         </View>
-        <ScrollView style={styles.readingWorkflowScroll} contentContainerStyle={styles.readingSavedContent}>{content}</ScrollView>
+        <ScrollView
+          style={styles.readingWorkflowScroll}
+          contentContainerStyle={styles.readingSavedContent}
+        >
+          {content}
+        </ScrollView>
         <View style={styles.readingSavedActions}>
           <Pressable onPress={goToNextCustomer} style={styles.primaryButton}>
-            <Text style={styles.primaryButtonText}>{translations.nextCustomer}</Text>
+            <Text style={styles.primaryButtonText}>
+              {translations.nextCustomer}
+            </Text>
           </Pressable>
-          <Pressable onPress={() => setScreen('list')} style={styles.secondaryFooterButton}>
-            <Text style={styles.secondaryFooterText}>{translations.backToDashboard}</Text>
+          <Pressable
+            onPress={() => setScreen("list")}
+            style={styles.secondaryFooterButton}
+          >
+            <Text style={styles.secondaryFooterText}>
+              {translations.backToDashboard}
+            </Text>
           </Pressable>
         </View>
       </View>
@@ -3194,40 +4812,75 @@ export default function App() {
     const formContent = (
       <View style={styles.newReadingCard}>
         <View style={styles.newReadingHeader}>
-          <Text style={styles.newReadingHeaderTitle}>{translations.newReading}</Text>
-          <Text style={styles.newReadingHeaderSubtitle}>{translations.newReadingSubtitle}</Text>
+          <Text style={styles.newReadingHeaderTitle}>
+            {translations.newReading}
+          </Text>
+          <Text style={styles.newReadingHeaderSubtitle}>
+            {translations.newReadingSubtitle}
+          </Text>
         </View>
 
         {newReadingSuccessMsg ? (
           <View style={styles.newReadingSuccessBanner}>
-            <Text style={styles.newReadingSuccessBannerText}>✓  {newReadingSuccessMsg}</Text>
+            <Text style={styles.newReadingSuccessBannerText}>
+              ✓ {newReadingSuccessMsg}
+            </Text>
           </View>
         ) : null}
         {newReadingErrorMsg ? (
-          <Text accessibilityRole="alert" style={styles.readingError}>{newReadingErrorMsg}</Text>
+          <Text accessibilityRole="alert" style={styles.readingError}>
+            {newReadingErrorMsg}
+          </Text>
         ) : null}
 
-        {/* 1. Meter Number / Account Number */}
+        {/* 1. CWASA Account Number */}
         <View style={styles.fieldBlock}>
           <View style={styles.newReadingLabelRow}>
             <Text style={styles.labelText}>
-              {translations.meterOrAccount} <Text style={{ color: '#E02424' }}>*</Text>
+              {translations.accountNumber}{" "}
+              <Text style={{ color: "#E02424" }}>*</Text>
             </Text>
             {newReadingAutoFetching ? (
-              <Text style={styles.newReadingFetchingBadge}>⟳ Auto-populating...</Text>
+              <Text style={styles.newReadingFetchingBadge}>
+                ⟳ {translations.findingCustomer}
+              </Text>
             ) : newReadingForm.customerName ? (
-              <Text style={styles.newReadingAutoFetchedBadge}>✓ Details auto-populated</Text>
+              <Text style={styles.newReadingAutoFetchedBadge}>
+                ✓ Details auto-populated
+              </Text>
             ) : null}
           </View>
           <TextInput
             value={newReadingForm.meterOrAccount}
             onChangeText={handleMeterOrAccountChange}
-            placeholder="Type Meter No (eg 340007M6)"
+            placeholder="Enter CWASA account number"
             placeholderTextColor="#8A93A8"
             style={styles.inputField}
           />
+          <Pressable
+            accessibilityRole="button"
+            disabled={
+              !newReadingForm.meterOrAccount.trim() || newReadingAutoFetching
+            }
+            onPress={() => void lookupNewReadingCustomer()}
+            style={[
+              styles.newReadingLocationButton,
+              styles.newReadingLookupButton,
+              (!newReadingForm.meterOrAccount.trim() ||
+                newReadingAutoFetching) &&
+                styles.readingDisabledButton,
+            ]}
+          >
+            <Text style={styles.newReadingLocationButtonText}>
+              {newReadingAutoFetching
+                ? translations.findingCustomer
+                : translations.findCustomer}
+            </Text>
+          </Pressable>
           {newReadingLookupError ? (
-            <Text accessibilityRole="alert" style={styles.readingError}>{newReadingLookupError}</Text>
+            <Text accessibilityRole="alert" style={styles.readingError}>
+              {newReadingLookupError}
+            </Text>
           ) : null}
         </View>
 
@@ -3261,10 +4914,12 @@ export default function App() {
           />
         </View>
 
-        {/* 4. Previous Bill (Auto-filled, Not Editable) */}
+        {/* 4. Previous Meter Reading (Auto-filled, Not Editable) */}
         <View style={styles.fieldBlock}>
           <View style={styles.newReadingLabelRow}>
-            <Text style={styles.labelText}>{translations.previousBill}</Text>
+            <Text style={styles.labelText}>
+              {translations.previousReadingValue}
+            </Text>
           </View>
           <TextInput
             value={newReadingForm.previousBill}
@@ -3276,25 +4931,68 @@ export default function App() {
           />
         </View>
 
-        {/* 5. Current Bill (Manual Input Required) */}
+        {/* 5. Current Meter Reading (Manual Input Required) */}
         <View style={styles.fieldBlock}>
           <View style={styles.newReadingLabelRow}>
             <Text style={styles.labelText}>
-              {translations.currentBill} <Text style={{ color: '#E02424' }}>*</Text>
+              {translations.currentReadingLabel}{" "}
+              <Text style={{ color: "#E02424" }}>*</Text>
             </Text>
             <Text style={styles.newReadingRequiredTag}>Input required</Text>
           </View>
           <TextInput
             value={newReadingForm.currentBill}
             onChangeText={(val) => {
-              setNewReadingSuccessMsg('');
+              setNewReadingSuccessMsg("");
               setNewReadingForm((prev) => ({ ...prev, currentBill: val }));
             }}
-            placeholder="Enter current bill"
+            placeholder="Enter current meter reading"
             placeholderTextColor="#8A93A8"
             keyboardType="decimal-pad"
             style={[styles.inputField, styles.inputFieldHighlight]}
           />
+        </View>
+
+        <View style={styles.fieldBlock}>
+          <View style={styles.newReadingLabelRow}>
+            <Text style={styles.labelText}>{translations.billingPeriod}</Text>
+          </View>
+          <View style={styles.gpsCoordsGrid}>
+            <View style={styles.fieldBlock}>
+              <Text style={styles.labelText}>{translations.billingMonth}</Text>
+              <TextInput
+                accessibilityLabel={translations.billingMonth}
+                keyboardType="number-pad"
+                maxLength={2}
+                onChangeText={(billingMonth) =>
+                  setNewReadingForm((previous) => ({
+                    ...previous,
+                    billingMonth,
+                  }))
+                }
+                placeholder="1-12"
+                style={styles.inputField}
+                value={newReadingForm.billingMonth}
+              />
+            </View>
+            <View style={styles.fieldBlock}>
+              <Text style={styles.labelText}>{translations.billingYear}</Text>
+              <TextInput
+                accessibilityLabel={translations.billingYear}
+                keyboardType="number-pad"
+                maxLength={4}
+                onChangeText={(billingYear) =>
+                  setNewReadingForm((previous) => ({
+                    ...previous,
+                    billingYear,
+                  }))
+                }
+                placeholder="YYYY"
+                style={styles.inputField}
+                value={newReadingForm.billingYear}
+              />
+            </View>
+          </View>
         </View>
 
         {/* 6. Location Input with device GPS collector */}
@@ -3307,11 +5005,15 @@ export default function App() {
                   <View style={styles.gpsCoordsGrid}>
                     <View style={styles.gpsCoordCard}>
                       <Text style={styles.gpsCoordLabel}>LATITUDE</Text>
-                      <Text style={styles.gpsCoordValue}>{newReadingForm.latitude}° N</Text>
+                      <Text style={styles.gpsCoordValue}>
+                        {newReadingForm.latitude}° N
+                      </Text>
                     </View>
                     <View style={styles.gpsCoordCard}>
                       <Text style={styles.gpsCoordLabel}>LONGITUDE</Text>
-                      <Text style={styles.gpsCoordValue}>{newReadingForm.longitude}° E</Text>
+                      <Text style={styles.gpsCoordValue}>
+                        {newReadingForm.longitude}° E
+                      </Text>
                     </View>
                   </View>
                   <Text style={styles.newReadingLocationStatusText}>
@@ -3322,7 +5024,7 @@ export default function App() {
                 <Text style={styles.newReadingLocationPlaceholder}>
                   {newReadingLocationLoading
                     ? translations.fetchingLocation
-                    : 'No GPS coordinates acquired yet. Tap button to access device GPS.'}
+                    : "No GPS coordinates acquired yet. Tap button to access device GPS."}
                 </Text>
               )}
             </View>
@@ -3330,67 +5032,147 @@ export default function App() {
             <Pressable
               disabled={newReadingLocationLoading}
               onPress={fetchDeviceLocation}
-              style={[styles.newReadingLocationButton, newReadingLocationLoading && styles.cameraDisabledButton]}
+              style={[
+                styles.newReadingLocationButton,
+                newReadingLocationLoading && styles.cameraDisabledButton,
+              ]}
             >
               <Text style={styles.newReadingLocationButtonText}>
-                {newReadingLocationLoading ? '⟳ Getting GPS...' : '📍 Access Device GPS'}
+                {newReadingLocationLoading
+                  ? "⟳ Getting GPS..."
+                  : "📍 Access Device GPS"}
               </Text>
             </Pressable>
             {newReadingLocationError ? (
-              <Text accessibilityRole="alert" style={styles.readingError}>{newReadingLocationError}</Text>
+              <Text accessibilityRole="alert" style={styles.readingError}>
+                {newReadingLocationError}
+              </Text>
             ) : null}
           </View>
         </View>
 
         {/* 7. Photo Input */}
         <View style={styles.fieldBlock}>
-          <Text style={styles.labelText}>{translations.meterPhotoLabel} <Text style={{ color: '#E02424' }}>*</Text></Text>
+          <Text style={styles.labelText}>
+            {translations.meterPhotoLabel}{" "}
+            <Text style={{ color: "#E02424" }}>*</Text>
+          </Text>
           {hasPhoto && newReadingPhoto ? (
             <View style={styles.newReadingPhotoPreviewWrapper}>
-              <Image source={{ uri: newReadingPhoto.uri }} style={styles.newReadingPhotoPreview} resizeMode="cover" />
-              <View style={[styles.newReadingPhotoActions, isCompactWeb && styles.newReadingPhotoActionsCompact]}>
+              <Image
+                source={{ uri: newReadingPhoto.uri }}
+                style={styles.newReadingPhotoPreview}
+                resizeMode="cover"
+              />
+              <View
+                style={[
+                  styles.newReadingPhotoActions,
+                  isCompactWeb && styles.newReadingPhotoActionsCompact,
+                ]}
+              >
                 <Pressable
                   onPress={openNewReadingCamera}
                   accessibilityRole="button"
                   accessibilityLabel={translations.retakePhoto}
-                  style={({ pressed }) => [styles.secondaryFooterButton, styles.newReadingPhotoActionButton, isCompactWeb && styles.newReadingPhotoActionButtonCompact, pressed && styles.newReadingPhotoButtonPressed]}
+                  style={({ pressed }) => [
+                    styles.secondaryFooterButton,
+                    styles.newReadingPhotoActionButton,
+                    isCompactWeb && styles.newReadingPhotoActionButtonCompact,
+                    pressed && styles.newReadingPhotoButtonPressed,
+                  ]}
                 >
-                  <Text style={[styles.secondaryFooterText, styles.newReadingPhotoButtonText]}>↻ {translations.retakePhoto}</Text>
+                  <Text
+                    style={[
+                      styles.secondaryFooterText,
+                      styles.newReadingPhotoButtonText,
+                    ]}
+                  >
+                    ↻ {translations.retakePhoto}
+                  </Text>
                 </Pressable>
                 <Pressable
                   onPress={() => void chooseNewReadingPhotoFromGallery()}
                   accessibilityRole="button"
                   accessibilityLabel={translations.chooseFromGallery}
-                  style={({ pressed }) => [styles.secondaryFooterButton, styles.newReadingPhotoActionButton, isCompactWeb && styles.newReadingPhotoActionButtonCompact, pressed && styles.newReadingPhotoButtonPressed]}
+                  style={({ pressed }) => [
+                    styles.secondaryFooterButton,
+                    styles.newReadingPhotoActionButton,
+                    isCompactWeb && styles.newReadingPhotoActionButtonCompact,
+                    pressed && styles.newReadingPhotoButtonPressed,
+                  ]}
                 >
-                  <Text style={[styles.secondaryFooterText, styles.newReadingPhotoButtonText]}>{translations.chooseFromGallery}</Text>
+                  <Text
+                    style={[
+                      styles.secondaryFooterText,
+                      styles.newReadingPhotoButtonText,
+                    ]}
+                  >
+                    {translations.chooseFromGallery}
+                  </Text>
                 </Pressable>
               </View>
               <Text style={styles.readingHelper}>
-                {translations.photoResizedTo} {newReadingPhoto.width} × {newReadingPhoto.height} {translations.pixelsBeforeUpload}
+                {translations.photoResizedTo} {newReadingPhoto.width} ×{" "}
+                {newReadingPhoto.height} {translations.pixelsBeforeUpload}
               </Text>
             </View>
           ) : (
             <>
-              <View style={[styles.newReadingPhotoActions, isCompactWeb && styles.newReadingPhotoActionsCompact]}>
+              <View
+                style={[
+                  styles.newReadingPhotoActions,
+                  isCompactWeb && styles.newReadingPhotoActionsCompact,
+                ]}
+              >
                 <Pressable
                   onPress={openNewReadingCamera}
                   accessibilityRole="button"
                   accessibilityLabel={translations.takePhoto}
-                  style={({ pressed }) => [styles.primaryButton, styles.newReadingPhotoActionButton, isCompactWeb && styles.newReadingPhotoActionButtonCompact, pressed && styles.newReadingPhotoButtonPressed]}
+                  style={({ pressed }) => [
+                    styles.primaryButton,
+                    styles.newReadingPhotoActionButton,
+                    isCompactWeb && styles.newReadingPhotoActionButtonCompact,
+                    pressed && styles.newReadingPhotoButtonPressed,
+                  ]}
                 >
-                  <Text style={[styles.primaryButtonText, styles.newReadingPhotoButtonText]}>📷 {translations.takePhoto}</Text>
+                  <Text
+                    style={[
+                      styles.primaryButtonText,
+                      styles.newReadingPhotoButtonText,
+                    ]}
+                  >
+                    📷 {translations.takePhoto}
+                  </Text>
                 </Pressable>
                 <Pressable
                   onPress={() => void chooseNewReadingPhotoFromGallery()}
                   accessibilityRole="button"
                   accessibilityLabel={translations.chooseFromGallery}
-                  style={({ pressed }) => [styles.secondaryFooterButton, styles.newReadingPhotoActionButton, isCompactWeb && styles.newReadingPhotoActionButtonCompact, pressed && styles.newReadingPhotoButtonPressed]}
+                  style={({ pressed }) => [
+                    styles.secondaryFooterButton,
+                    styles.newReadingPhotoActionButton,
+                    isCompactWeb && styles.newReadingPhotoActionButtonCompact,
+                    pressed && styles.newReadingPhotoButtonPressed,
+                  ]}
                 >
-                  <Text style={[styles.secondaryFooterText, styles.newReadingPhotoButtonText]}>{translations.chooseFromGallery}</Text>
+                  <Text
+                    style={[
+                      styles.secondaryFooterText,
+                      styles.newReadingPhotoButtonText,
+                    ]}
+                  >
+                    {translations.chooseFromGallery}
+                  </Text>
                 </Pressable>
               </View>
-              <Text style={[styles.readingHelper, styles.newReadingPhotoRequiredHint]}>{translations.meterPhotoRequired}</Text>
+              <Text
+                style={[
+                  styles.readingHelper,
+                  styles.newReadingPhotoRequiredHint,
+                ]}
+              >
+                {translations.meterPhotoRequired}
+              </Text>
             </>
           )}
         </View>
@@ -3400,16 +5182,20 @@ export default function App() {
           <Pressable
             disabled={newReadingSaving}
             onPress={() => void submitNewReadingForm()}
-            style={[styles.primaryButton, newReadingSaving && styles.readingDisabledButton]}
+            style={[
+              styles.primaryButton,
+              newReadingSaving && styles.readingDisabledButton,
+            ]}
           >
             <Text style={styles.primaryButtonText}>
-              {newReadingSaving ? 'Saving reading...' : translations.submitNewReading}
+              {newReadingSaving
+                ? "Saving reading..."
+                : translations.submitNewReading}
             </Text>
           </Pressable>
           <Pressable
             onPress={() => {
               resetNewReadingForm();
-              setScreen('list');
             }}
             style={styles.secondaryFooterButton}
           >
@@ -3422,7 +5208,9 @@ export default function App() {
     return isWeb ? (
       <View style={styles.webDashboard}>
         <View style={styles.webMain}>
-          <View style={[styles.webTopBar, isCompactWeb && styles.webTopBarCompact]}>
+          <View
+            style={[styles.webTopBar, isCompactWeb && styles.webTopBarCompact]}
+          >
             {renderPageHeaderControls()}
             <View>
               <Text style={styles.webPageTitle}>{translations.newReading}</Text>
@@ -3431,7 +5219,11 @@ export default function App() {
           </View>
           <ScrollView
             style={styles.webContent}
-            contentContainerStyle={[styles.newReadingScrollContent, styles.webPageFooterSpace, isCompactWeb && styles.webContentInnerCompact]}
+            contentContainerStyle={[
+              styles.newReadingScrollContent,
+              styles.webPageFooterSpace,
+              isCompactWeb && styles.webContentInnerCompact,
+            ]}
           >
             {formContent}
             {renderWebPageFooter()}
@@ -3442,10 +5234,15 @@ export default function App() {
       <View style={styles.screenShellDark}>
         <View style={styles.topBar}>
           {renderPageHeaderControls()}
-          <Text style={[styles.heading, styles.topBarTitle]}>{translations.newReading}</Text>
+          <Text style={[styles.heading, styles.topBarTitle]}>
+            {translations.newReading}
+          </Text>
           {renderPageBackButton()}
         </View>
-        <ScrollView style={styles.readingWorkflowScroll} contentContainerStyle={styles.newReadingScrollContent}>
+        <ScrollView
+          style={styles.readingWorkflowScroll}
+          contentContainerStyle={styles.newReadingScrollContent}
+        >
           {formContent}
         </ScrollView>
       </View>
@@ -3465,30 +5262,58 @@ export default function App() {
   return (
     <SafeAreaProvider>
       <SafeAreaView style={[styles.appRoot, isWeb && styles.appRootWeb]}>
-        <StatusBar style={screen === 'list' || screen === 'completed' || screen === 'detail' || screen === 'camera' || screen === 'enter' || screen === 'review' || screen === 'saved' || screen === 'newReading' ? 'light' : 'dark'} />
-        <View style={[styles.deviceShell, isWeb && styles.deviceShellWeb, isWeb && (isCompactWeb || isShortScreen) && styles.deviceShellWebCompact]}>
-          {screen === 'splash' ? renderSplash() : null}
-          {screen === 'signin' ? renderSignIn() : null}
-          {screen === 'admin' && authUser?.role === 'admin' ? (
-            <AdminPanel language={language} onSignOut={logOut} />
+        <StatusBar
+          style={
+            screen === "list" ||
+            screen === "completed" ||
+            screen === "detail" ||
+            screen === "camera" ||
+            screen === "enter" ||
+            screen === "review" ||
+            screen === "saved" ||
+            screen === "newReading"
+              ? "light"
+              : "dark"
+          }
+        />
+        <View
+          style={[
+            styles.deviceShell,
+            isWeb && styles.deviceShellWeb,
+            isWeb &&
+              (isCompactWeb || isShortScreen) &&
+              styles.deviceShellWebCompact,
+          ]}
+        >
+          {screen === "splash" ? renderSplash() : null}
+          {screen === "signin" ? renderSignIn() : null}
+          {screen === "admin" && authUser?.role === "admin" ? (
+            <AdminPanel
+              language={language}
+              onOpenMenu={() => setDrawerOpen(true)}
+            />
           ) : null}
-          {screen === 'profile' ? renderProfile() : null}
-          {screen === 'camera' ? renderCamera() : null}
-          {screen === 'enter' ? renderReadingEntry() : null}
-          {screen === 'review' ? renderReadingReview() : null}
-          {screen === 'saved' ? renderReadingSaved() : null}
-          {screen === 'newReading' ? renderNewReading() : null}
-          {screen === 'list' && isWeb ? renderWebList() : null}
-          {screen === 'list' && !isWeb ? renderList() : null}
-          {screen === 'completed' ? renderCompletedReadings() : null}
-          {screen === 'detail' && isWeb ? renderWebDetail() : null}
-          {screen === 'detail' && !isWeb ? renderDetail() : null}
-          {screen === 'sr' && isWeb ? renderWebServiceRequests() : null}
-          {screen === 'sr' && !isWeb ? renderServiceRequestList() : null}
-          {screen === 'srnew' && isWeb ? renderWebCreateServiceRequest() : null}
-          {screen === 'srnew' && !isWeb ? renderCreateServiceRequest() : null}
-          {screen === 'srdone' && isWeb ? renderWebServiceRequestSubmitted() : null}
-          {screen === 'srdone' && !isWeb ? renderServiceRequestSubmitted() : null}
+          {screen === "profile" ? renderProfile() : null}
+          {screen === "camera" ? renderCamera() : null}
+          {screen === "enter" ? renderReadingEntry() : null}
+          {screen === "review" ? renderReadingReview() : null}
+          {screen === "saved" ? renderReadingSaved() : null}
+          {screen === "newReading" ? renderNewReading() : null}
+          {screen === "list" && isWeb ? renderWebList() : null}
+          {screen === "list" && !isWeb ? renderList() : null}
+          {screen === "completed" ? renderCompletedReadings() : null}
+          {screen === "detail" && isWeb ? renderWebDetail() : null}
+          {screen === "detail" && !isWeb ? renderDetail() : null}
+          {screen === "sr" && isWeb ? renderWebServiceRequests() : null}
+          {screen === "sr" && !isWeb ? renderServiceRequestList() : null}
+          {screen === "srnew" && isWeb ? renderWebCreateServiceRequest() : null}
+          {screen === "srnew" && !isWeb ? renderCreateServiceRequest() : null}
+          {screen === "srdone" && isWeb
+            ? renderWebServiceRequestSubmitted()
+            : null}
+          {screen === "srdone" && !isWeb
+            ? renderServiceRequestSubmitted()
+            : null}
           {drawerOpen ? renderAccountDrawer() : null}
         </View>
       </SafeAreaView>

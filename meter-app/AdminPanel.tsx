@@ -6,28 +6,42 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
-  Text,
+  Text as NativeText,
   TextInput,
+  type TextProps,
   View,
 } from 'react-native';
 import {
   approveMeterReading,
+  createBillTariff,
   createMeterInspector,
-  deactivateMeterInspector,
-  getAdminCompletedMeterReadings,
+  createVatRate,
   getAdminInspectors,
-  getAdminPendingMeterReadings,
-  getAdminRejectedMeterReadings,
+  getAdminMeterReadings,
   rejectMeterReading,
   setMeterInspectorPassword,
   type AdminInspector,
-  type MeterReadingSubmission,
+  type AdminMeterReading,
 } from './api';
 import { LANG, type Language } from './translations';
 
+function Text({ style, ...props }: TextProps) {
+  const fontWeight = StyleSheet.flatten(style)?.fontWeight;
+  const isBold = fontWeight === 'bold' ||
+    (typeof fontWeight === 'string' && Number(fontWeight) >= 600) ||
+    (typeof fontWeight === 'number' && fontWeight >= 600);
+
+  return (
+    <NativeText
+      {...props}
+      style={[style, { fontFamily: isBold ? 'Open Sans Bold' : 'Open Sans' }]}
+    />
+  );
+}
+
 type AdminPanelProps = {
   language: Language;
-  onSignOut: () => void | Promise<void>;
+  onOpenMenu: () => void;
 };
 
 type PasswordFields = {
@@ -35,20 +49,54 @@ type PasswordFields = {
   confirmation: string;
 };
 
-type AdminSection = 'overview' | 'readings' | 'passwords' | 'create' | 'deactivate';
+type AdminSection = 'overview' | 'readings' | 'passwords' | 'rates' | 'deactivate';
+type PasswordSubsection = 'add-mi' | 'set-password';
+type RateSubsection = 'tariff' | 'vat';
 type ReadingTab = 'Pending' | 'Completed' | 'Rejected';
+type BillTariffCategory = 'RESIDENTIAL' | 'NON_RESIDENTIAL';
 type NewInspectorFields = {
   readerCode: string;
-  name: string;
-  phoneNumber: string;
-  email: string;
-  password: string;
-  confirmation: string;
 };
 
-export default function AdminPanel({ language, onSignOut }: AdminPanelProps) {
+function formatDateInput(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function isValidDateInput(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const date = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
+}
+
+function dateInputToIsoDateTime(value: string): string | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const date = new Date(`${value}T00:00:00.000Z`);
+  if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== value) return null;
+  if (value < new Date().toISOString().slice(0, 10)) return null;
+  return date.toISOString();
+}
+
+export default function AdminPanel({ language, onOpenMenu }: AdminPanelProps) {
   const t = LANG[language];
   const [activeSection, setActiveSection] = useState<AdminSection>('overview');
+  const [passwordSubsection, setPasswordSubsection] = useState<PasswordSubsection>('set-password');
+  const [rateSubsection, setRateSubsection] = useState<RateSubsection>('tariff');
+  const [tariffFields, setTariffFields] = useState({
+    category: 'RESIDENTIAL' as BillTariffCategory,
+    description: '',
+    ratePerM3: '',
+    minUnitsPerDay: '',
+    effectiveFrom: new Date().toISOString().slice(0, 10),
+  });
+  const [vatFields, setVatFields] = useState({
+    percentage: '',
+    effectiveFrom: new Date().toISOString().slice(0, 10),
+  });
+  const [rateSaving, setRateSaving] = useState(false);
+  const [rateFeedback, setRateFeedback] = useState<{ message: string; success: boolean } | null>(null);
   const [inspectors, setInspectors] = useState<AdminInspector[]>([]);
   const [passwordFields, setPasswordFields] = useState<Record<string, PasswordFields>>({});
   const [visiblePasswordCodes, setVisiblePasswordCodes] = useState<Record<string, boolean>>({});
@@ -60,42 +108,38 @@ export default function AdminPanel({ language, onSignOut }: AdminPanelProps) {
   const [loadError, setLoadError] = useState('');
   const [savingCode, setSavingCode] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<{ readerCode: string; message: string } | null>(null);
-  const [pendingReadings, setPendingReadings] = useState<MeterReadingSubmission[]>([]);
-  const [approvedReadings, setApprovedReadings] = useState<MeterReadingSubmission[]>([]);
-  const [rejectedReadings, setRejectedReadings] = useState<MeterReadingSubmission[]>([]);
+  const [pendingReadings, setPendingReadings] = useState<AdminMeterReading[]>([]);
+  const [approvedReadings, setApprovedReadings] = useState<AdminMeterReading[]>([]);
+  const [rejectedReadings, setRejectedReadings] = useState<AdminMeterReading[]>([]);
   const [pendingLoading, setPendingLoading] = useState(true);
   const [pendingError, setPendingError] = useState('');
   const [readingTab, setReadingTab] = useState<ReadingTab>('Pending');
   const [selectedReadingIds, setSelectedReadingIds] = useState<string[]>([]);
-  const [readingDetails, setReadingDetails] = useState<MeterReadingSubmission | null>(null);
-  const [bulkUpdating, setBulkUpdating] = useState(false);
-  const [approvingReadingId, setApprovingReadingId] = useState<string | null>(null);
-  const [approvalError, setApprovalError] = useState('');
-  const [newInspector, setNewInspector] = useState<NewInspectorFields>({
-    readerCode: '', name: '', phoneNumber: '', email: '', password: '', confirmation: '',
+  const [readingDetails, setReadingDetails] = useState<AdminMeterReading | null>(null);
+  const [approvalTargetIds, setApprovalTargetIds] = useState<string[]>([]);
+  const [billIssueDate, setBillIssueDate] = useState(() => formatDateInput(new Date()));
+  const [billDueDate, setBillDueDate] = useState(() => {
+    const dueDate = new Date();
+    dueDate.setDate(dueDate.getDate() + 30);
+    return formatDateInput(dueDate);
   });
-  const [newInspectorVisible, setNewInspectorVisible] = useState(false);
+  const [approvalSaving, setApprovalSaving] = useState(false);
+  const [approvalError, setApprovalError] = useState('');
+  const [rejectionTargetIds, setRejectionTargetIds] = useState<string[]>([]);
+  const [rejectReason, setRejectReason] = useState('');
+  const [rejectionSaving, setRejectionSaving] = useState(false);
+  const [newInspector, setNewInspector] = useState<NewInspectorFields>({ readerCode: '' });
   const [newInspectorSaving, setNewInspectorSaving] = useState(false);
   const [newInspectorFeedback, setNewInspectorFeedback] = useState<{ message: string; success: boolean } | null>(null);
-  const [deactivationSearch, setDeactivationSearch] = useState('');
-  const [deactivationQuery, setDeactivationQuery] = useState('');
-  const [selectedDeactivationInspector, setSelectedDeactivationInspector] = useState<AdminInspector | null>(null);
-  const [deactivationTarget, setDeactivationTarget] = useState<AdminInspector | null>(null);
-  const [deactivating, setDeactivating] = useState(false);
-  const [deactivationFeedback, setDeactivationFeedback] = useState<{ message: string; success: boolean } | null>(null);
 
   const loadReadings = useCallback(async () => {
     setPendingLoading(true);
     setPendingError('');
     try {
-      const [pending, approved, rejected] = await Promise.all([
-        getAdminPendingMeterReadings(),
-        getAdminCompletedMeterReadings(),
-        getAdminRejectedMeterReadings(),
-      ]);
-      setPendingReadings(pending);
-      setApprovedReadings(approved);
-      setRejectedReadings(rejected);
+      const readings = await getAdminMeterReadings();
+      setPendingReadings(readings.filter((reading) => reading.status === null || reading.status === 'PENDING'));
+      setApprovedReadings(readings.filter((reading) => reading.status === 'APPROVED'));
+      setRejectedReadings(readings.filter((reading) => reading.status === 'REJECTED'));
     } catch (error) {
       setPendingError(error instanceof Error
         ? `${t.adminReadingsLoadFailed} (${error.message})`
@@ -109,7 +153,13 @@ export default function AdminPanel({ language, onSignOut }: AdminPanelProps) {
     setLoading(true);
     setLoadError('');
     try {
-      setInspectors(await getAdminInspectors());
+      const loadedInspectors = await getAdminInspectors();
+      setInspectors((current) => loadedInspectors.map((inspector) => {
+        const existing = current.find((item) => item.id === inspector.id);
+        return inspector.hasPassword === undefined && existing?.hasPassword !== undefined
+          ? { ...inspector, hasPassword: existing.hasPassword }
+          : inspector;
+      }));
     } catch (error) {
       setLoadError(error instanceof Error
         ? `${t.adminInspectorsLoadFailed} (${error.message})`
@@ -127,51 +177,81 @@ export default function AdminPanel({ language, onSignOut }: AdminPanelProps) {
     void loadReadings();
   }, [loadReadings]);
 
-  const approveReading = async (readingId: string) => {
-    setApprovingReadingId(readingId);
+  const requestApproval = (readingIds: string[]) => {
+    if (readingIds.length === 0) return;
+    const issueDate = new Date();
+    const dueDate = new Date(issueDate);
+    dueDate.setDate(dueDate.getDate() + 30);
+    setBillIssueDate(formatDateInput(issueDate));
+    setBillDueDate(formatDateInput(dueDate));
+    setApprovalTargetIds(readingIds);
+    setReadingDetails(null);
     setApprovalError('');
-    try {
-      await approveMeterReading(readingId);
-      await loadReadings();
-      setSelectedReadingIds((current) => current.filter((id) => id !== readingId));
-      setReadingDetails(null);
-    } catch {
-      setApprovalError(t.adminReadingApprovalFailed);
-    } finally {
-      setApprovingReadingId(null);
-    }
   };
 
-  const rejectReading = async (readingId: string) => {
-    setApprovingReadingId(readingId);
-    setApprovalError('');
-    try {
-      await rejectMeterReading(readingId);
-      await loadReadings();
-      setSelectedReadingIds((current) => current.filter((id) => id !== readingId));
-      setReadingDetails(null);
-    } catch {
-      setApprovalError(t.adminReadingApprovalFailed);
-    } finally {
-      setApprovingReadingId(null);
+  const confirmApproval = async () => {
+    if (
+      approvalTargetIds.length === 0 ||
+      !isValidDateInput(billIssueDate) ||
+      !isValidDateInput(billDueDate) ||
+      billDueDate < billIssueDate
+    ) {
+      setApprovalError(t.adminInvalidApprovalDates);
+      return;
     }
-  };
 
-  const updateSelectedReadings = async (action: 'approve' | 'reject') => {
-    if (selectedReadingIds.length === 0) return;
-    setBulkUpdating(true);
+    setApprovalSaving(true);
     setApprovalError('');
+    const targetIds = approvalTargetIds;
     const results = await Promise.allSettled(
-      selectedReadingIds.map((readingId) =>
-        action === 'approve' ? approveMeterReading(readingId) : rejectMeterReading(readingId),
-      ),
+      targetIds.map((readingId) => approveMeterReading(readingId, billIssueDate, billDueDate)),
     );
     await loadReadings();
-    setSelectedReadingIds([]);
+    setSelectedReadingIds((current) => current.filter((id) => !targetIds.includes(id)));
+    setReadingDetails(null);
+    setApprovalTargetIds([]);
     if (results.some((result) => result.status === 'rejected')) {
       setApprovalError(t.adminBulkActionFailed);
     }
-    setBulkUpdating(false);
+    setApprovalSaving(false);
+  };
+
+  const approveReading = (readingId: string) => {
+    requestApproval([readingId]);
+  };
+
+  const requestRejection = (readingIds: string[]) => {
+    if (readingIds.length === 0) return;
+    setReadingDetails(null);
+    setRejectionTargetIds(readingIds);
+    setRejectReason('');
+    setApprovalError('');
+  };
+
+  const confirmRejection = async () => {
+    const reason = rejectReason.trim();
+    if (!reason || reason.length > 500 || rejectionTargetIds.length === 0) return;
+    setRejectionSaving(true);
+    setApprovalError('');
+    const targetIds = rejectionTargetIds;
+    const results = await Promise.allSettled(
+      targetIds.map((readingId) => rejectMeterReading(readingId, reason)),
+    );
+    await loadReadings();
+    setSelectedReadingIds((current) =>
+      current.filter((id) => !targetIds.includes(id)),
+    );
+    setReadingDetails(null);
+    setRejectionTargetIds([]);
+    if (results.some((result) => result.status === 'rejected')) {
+      setApprovalError(t.adminBulkActionFailed);
+    }
+    setRejectionSaving(false);
+  };
+
+  const updateSelectedReadings = () => {
+    if (selectedReadingIds.length === 0) return;
+    requestApproval(selectedReadingIds);
   };
 
   const updatePasswordField = (readerCode: string, field: keyof PasswordFields, value: string) => {
@@ -186,9 +266,15 @@ export default function AdminPanel({ language, onSignOut }: AdminPanelProps) {
     setFeedback(null);
   };
 
-  const savePassword = async (readerCode: string) => {
+  const savePassword = async (readerCode: string, meterReaderId: string) => {
+    const inspector = inspectors.find((item) => item.id === meterReaderId);
+    if (inspector?.hasPassword === true) {
+      setFeedback({ readerCode, message: t.adminPasswordReady });
+      return;
+    }
+
     const fields = passwordFields[readerCode] ?? { password: '', confirmation: '' };
-    if (fields.password.length < 12) {
+    if (fields.password.length < 8) {
       setFeedback({ readerCode, message: t.adminPasswordTooShort });
       return;
     }
@@ -200,18 +286,12 @@ export default function AdminPanel({ language, onSignOut }: AdminPanelProps) {
     setSavingCode(readerCode);
     setFeedback(null);
     try {
-      await setMeterInspectorPassword(readerCode, fields.password);
-      setInspectors((current) =>
-        current.map((inspector) =>
-          inspector.readerCode === readerCode
-            ? { ...inspector, passwordConfigured: true, isActive: true }
-            : inspector,
-        ),
-      );
+      await setMeterInspectorPassword(meterReaderId, fields.password);
+      setInspectors((current) => current.map((item) =>
+        item.id === meterReaderId ? { ...item, hasPassword: true } : item,
+      ));
       setSelectedPasswordInspector((current) =>
-        current?.readerCode === readerCode
-          ? { ...current, passwordConfigured: true, isActive: true }
-          : current,
+        current?.id === meterReaderId ? { ...current, hasPassword: true } : current,
       );
       setPasswordFields((current) => ({
         ...current,
@@ -227,31 +307,31 @@ export default function AdminPanel({ language, onSignOut }: AdminPanelProps) {
   };
 
   const createInspector = async () => {
-    if (!newInspector.readerCode.trim() || !newInspector.name.trim() || !newInspector.phoneNumber.trim() || !newInspector.email.trim()) {
+    const readerCode = newInspector.readerCode.trim();
+    if (!readerCode) {
       setNewInspectorFeedback({ message: t.completeAllFields, success: false });
-      return;
-    }
-    if (newInspector.password.length < 12) {
-      setNewInspectorFeedback({ message: t.adminPasswordTooShort, success: false });
-      return;
-    }
-    if (newInspector.password !== newInspector.confirmation) {
-      setNewInspectorFeedback({ message: t.adminPasswordMismatch, success: false });
       return;
     }
     setNewInspectorSaving(true);
     setNewInspectorFeedback(null);
     try {
-      const created = await createMeterInspector({
-        readerCode: newInspector.readerCode.trim(),
-        name: newInspector.name.trim(),
-        phoneNumber: newInspector.phoneNumber.trim(),
-        email: newInspector.email.trim(),
-        password: newInspector.password,
+      await createMeterInspector({
+        readerCode,
       });
-      setInspectors((current) => [...current.filter((item) => item.readerCode !== created.readerCode), created]);
-      setNewInspector({ readerCode: '', name: '', phoneNumber: '', email: '', password: '', confirmation: '' });
+      await loadInspectors();
+      setInspectors((current) => current.map((inspector) =>
+        inspector.readerCode.toLowerCase() === readerCode.toLowerCase() &&
+        inspector.hasPassword === undefined
+          ? { ...inspector, hasPassword: false }
+          : inspector,
+      ));
+      setNewInspector({ readerCode: '' });
       setNewInspectorFeedback({ message: t.adminInspectorCreated, success: true });
+      setInspectorSearch(readerCode);
+      setInspectorSearchQuery(readerCode);
+      setSelectedPasswordInspector(null);
+      setPasswordEditorOpen(false);
+      setPasswordSubsection('set-password');
     } catch {
       setNewInspectorFeedback({ message: t.adminInspectorCreateFailed, success: false });
     } finally {
@@ -259,27 +339,78 @@ export default function AdminPanel({ language, onSignOut }: AdminPanelProps) {
     }
   };
 
-  const deactivateInspector = async () => {
-    if (!deactivationTarget) return;
-    const target = deactivationTarget;
-    setDeactivating(true);
-    setDeactivationFeedback(null);
+  const submitTariff = async () => {
+    const ratePerM3 = Number(tariffFields.ratePerM3);
+    const minUnitsPerDay = Number(tariffFields.minUnitsPerDay);
+    const effectiveFrom = dateInputToIsoDateTime(tariffFields.effectiveFrom);
+    const description = tariffFields.description.trim();
+
+    if (!effectiveFrom) {
+      setRateFeedback({ message: t.adminDateMustBeTodayOrLater, success: false });
+      return;
+    }
+    if (!tariffFields.ratePerM3.trim() || !Number.isFinite(ratePerM3) || ratePerM3 <= 0) {
+      setRateFeedback({ message: t.adminRateMustBePositive, success: false });
+      return;
+    }
+    if (!tariffFields.minUnitsPerDay.trim() || !Number.isFinite(minUnitsPerDay) || minUnitsPerDay < 0) {
+      setRateFeedback({ message: t.adminMinUnitsInvalid, success: false });
+      return;
+    }
+    if (description.length > 500) {
+      setRateFeedback({ message: t.adminDescriptionTooLong, success: false });
+      return;
+    }
+
+    setRateSaving(true);
+    setRateFeedback(null);
     try {
-      await deactivateMeterInspector(target.readerCode);
-      setInspectors((current) => current.map((inspector) =>
-        inspector.readerCode === target.readerCode
-          ? { ...inspector, isActive: false }
-          : inspector,
-      ));
-      setSelectedDeactivationInspector((current) => current?.readerCode === target.readerCode
-        ? { ...current, isActive: false }
-        : current);
-      setDeactivationFeedback({ message: t.adminInspectorDeactivated, success: true });
-      setDeactivationTarget(null);
-    } catch {
-      setDeactivationFeedback({ message: t.adminInspectorDeactivateFailed, success: false });
+      await createBillTariff({
+        category: tariffFields.category,
+        ...(description ? { description } : {}),
+        ratePerM3,
+        minUnitsPerDay,
+        effectiveFrom,
+      });
+      setRateFeedback({ message: t.adminTariffCreated, success: true });
+    } catch (error) {
+      setRateFeedback({
+        message: error instanceof Error
+          ? `${t.adminBillingRateCreateFailed} (${error.message})`
+          : t.adminBillingRateCreateFailed,
+        success: false,
+      });
     } finally {
-      setDeactivating(false);
+      setRateSaving(false);
+    }
+  };
+
+  const submitVatRate = async () => {
+    const percentage = Number(vatFields.percentage);
+    const effectiveFrom = dateInputToIsoDateTime(vatFields.effectiveFrom);
+    if (!effectiveFrom) {
+      setRateFeedback({ message: t.adminDateMustBeTodayOrLater, success: false });
+      return;
+    }
+    if (!vatFields.percentage.trim() || !Number.isFinite(percentage) || percentage < 0 || percentage > 999.99) {
+      setRateFeedback({ message: t.adminPercentageInvalid, success: false });
+      return;
+    }
+
+    setRateSaving(true);
+    setRateFeedback(null);
+    try {
+      await createVatRate({ percentage, effectiveFrom });
+      setRateFeedback({ message: t.adminVatRateCreated, success: true });
+    } catch (error) {
+      setRateFeedback({
+        message: error instanceof Error
+          ? `${t.adminBillingRateCreateFailed} (${error.message})`
+          : t.adminBillingRateCreateFailed,
+        success: false,
+      });
+    } finally {
+      setRateSaving(false);
     }
   };
 
@@ -289,20 +420,23 @@ export default function AdminPanel({ language, onSignOut }: AdminPanelProps) {
       ? approvedReadings
       : rejectedReadings;
   const filteredInspectors = inspectors.filter((inspector) =>
-    `${inspector.readerCode} ${inspector.name}`
+    `${inspector.readerCode} ${inspector.name} ${inspector.id}`
       .toLowerCase()
       .includes(inspectorSearchQuery.trim().toLowerCase()),
-  );
-  const filteredDeactivationInspectors = inspectors.filter((inspector) =>
-    `${inspector.readerCode} ${inspector.name}`
-      .toLowerCase()
-      .includes(deactivationQuery.trim().toLowerCase()),
   );
   const allPendingSelected = pendingReadings.length > 0 && selectedReadingIds.length === pendingReadings.length;
 
   return (
     <View style={styles.page}>
       <View style={styles.header}>
+        <Pressable
+          accessibilityLabel={t.moreOptions}
+          accessibilityRole="button"
+          onPress={onOpenMenu}
+          style={styles.menuButton}
+        >
+          <Text style={styles.menuButtonText}>☰</Text>
+        </Pressable>
         <View style={styles.headerText}>
           <Text style={styles.title}>{t.adminDashboard}</Text>
           <Text style={styles.subtitle}>{t.adminPanelDescription}</Text>
@@ -310,9 +444,6 @@ export default function AdminPanel({ language, onSignOut }: AdminPanelProps) {
         <View style={styles.headerActions}>
           <Pressable accessibilityRole="button" onPress={() => { void loadInspectors(); void loadReadings(); }} style={styles.secondaryButton}>
             <Text style={styles.secondaryButtonText}>{t.adminRefreshList}</Text>
-          </Pressable>
-          <Pressable accessibilityRole="button" onPress={() => void onSignOut()} style={styles.signOutButton}>
-            <Text style={styles.signOutText}>{t.adminSignOut}</Text>
           </Pressable>
         </View>
       </View>
@@ -322,7 +453,7 @@ export default function AdminPanel({ language, onSignOut }: AdminPanelProps) {
           ['overview', t.adminOverview],
           ['readings', t.adminApproveMeterReadings],
           ['passwords', t.adminAssignInspectorPassword],
-          ['create', t.adminCreateMiAccount],
+          ['rates', t.adminBillingRates],
           ['deactivate', t.adminDeactivateAccount],
         ] as const).map(([section, label]) => (
           <Pressable
@@ -400,17 +531,17 @@ export default function AdminPanel({ language, onSignOut }: AdminPanelProps) {
               <Text style={styles.readerCode}>{selectedReadingIds.length} {t.adminSelectedCount}</Text>
               <Pressable
                 accessibilityRole="button"
-                disabled={selectedReadingIds.length === 0 || bulkUpdating}
-                onPress={() => void updateSelectedReadings('approve')}
-                style={[styles.saveButton, (selectedReadingIds.length === 0 || bulkUpdating) && styles.saveButtonDisabled]}
+                disabled={selectedReadingIds.length === 0 || approvalSaving}
+                onPress={() => void updateSelectedReadings()}
+                style={[styles.saveButton, (selectedReadingIds.length === 0 || approvalSaving) && styles.saveButtonDisabled]}
               >
                 <Text style={styles.saveButtonText}>{t.adminApproveReading}</Text>
               </Pressable>
               <Pressable
                 accessibilityRole="button"
-                disabled={selectedReadingIds.length === 0 || bulkUpdating}
-                onPress={() => void updateSelectedReadings('reject')}
-                style={[styles.rejectButton, (selectedReadingIds.length === 0 || bulkUpdating) && styles.saveButtonDisabled]}
+                disabled={selectedReadingIds.length === 0 || approvalSaving || rejectionSaving}
+                onPress={() => requestRejection(selectedReadingIds)}
+                style={[styles.rejectButton, (selectedReadingIds.length === 0 || approvalSaving || rejectionSaving) && styles.saveButtonDisabled]}
               >
                 <Text style={styles.rejectButtonText}>{t.adminRejectSelected}</Text>
               </Pressable>
@@ -441,16 +572,17 @@ export default function AdminPanel({ language, onSignOut }: AdminPanelProps) {
                     </Pressable>
                   ) : null}
                   <Pressable accessibilityRole="button" onPress={() => setReadingDetails(reading)} style={styles.readingSummary}>
-                    <Text style={styles.name}>{reading.customerName}</Text>
-                    <Text style={styles.readerCode}>RICODE: {reading.readerCode}</Text>
-                    <Text style={styles.readerCode}>{t.accountNumber}: {reading.accountNo} · {t.meter}: {reading.meterNo || '—'} · {t.ward}: {reading.wardNo || '—'}</Text>
-                    <Text style={styles.readerCode}>{t.currentBill}: ৳{Number(reading.currentBill).toLocaleString('en-US', { minimumFractionDigits: 2 })}</Text>
-                    <Text style={styles.readerCode}>{new Date(reading.createdAt).toLocaleString()}</Text>
+                    <Text style={styles.name}>{t.adminCustomerId}: {reading.customerId}</Text>
+                    <Text style={styles.readerCode}>{t.adminMeterReaderName}: {reading.meterReader.name} · RICODE: {reading.meterReader.readerCode}</Text>
+                    <Text style={styles.readerCode}>{t.meter}: {reading.meterNo || '—'}</Text>
+                    <Text style={styles.readerCode}>{t.adminReadingAddress}: {reading.addressSnapshot}</Text>
+                    <Text style={styles.readerCode}>{t.previousReading}: {reading.previousReading} · {t.currentReading}: {reading.currentReading}</Text>
+                    <Text style={styles.readerCode}>{new Date(reading.readingDate).toLocaleString()}</Text>
                   </Pressable>
                 </View>
                 <View style={styles.readingActions}>
-                  <Text style={reading.status === 'Completed' ? styles.statusEnabled : reading.status === 'Rejected' ? styles.statusDisabled : styles.readerCode}>
-                    {reading.status === 'Completed' ? t.adminApprovedReadings : reading.status === 'Rejected' ? t.adminRejectedReadings : t.adminPendingReadings}
+                  <Text style={reading.status === 'APPROVED' ? styles.statusEnabled : reading.status === 'REJECTED' ? styles.statusDisabled : styles.readerCode}>
+                    {reading.status === 'APPROVED' ? t.adminApprovedReadings : reading.status === 'REJECTED' ? t.adminRejectedReadings : t.adminPendingReadings}
                   </Text>
                   <Pressable accessibilityRole="button" onPress={() => setReadingDetails(reading)} style={styles.secondaryButton}>
                     <Text style={styles.secondaryButtonText}>{t.adminReadingDetails}</Text>
@@ -459,17 +591,17 @@ export default function AdminPanel({ language, onSignOut }: AdminPanelProps) {
                     <>
                       <Pressable
                         accessibilityRole="button"
-                        disabled={approvingReadingId !== null || bulkUpdating}
+                        disabled={approvalSaving || rejectionSaving}
                         onPress={() => void approveReading(reading.id)}
-                        style={[styles.saveButton, (approvingReadingId !== null || bulkUpdating) && styles.saveButtonDisabled]}
+                        style={[styles.saveButton, (approvalSaving || rejectionSaving) && styles.saveButtonDisabled]}
                       >
-                        <Text style={styles.saveButtonText}>{approvingReadingId === reading.id ? t.adminApprovingReading : t.adminApproveReading}</Text>
+                        <Text style={styles.saveButtonText}>{approvalSaving ? t.adminApprovingReading : t.adminApproveReading}</Text>
                       </Pressable>
                       <Pressable
                         accessibilityRole="button"
-                        disabled={approvingReadingId !== null || bulkUpdating}
-                        onPress={() => void rejectReading(reading.id)}
-                        style={[styles.rejectButton, (approvingReadingId !== null || bulkUpdating) && styles.saveButtonDisabled]}
+                        disabled={approvalSaving || rejectionSaving}
+                        onPress={() => requestRejection([reading.id])}
+                        style={[styles.rejectButton, (approvalSaving || rejectionSaving) && styles.saveButtonDisabled]}
                       >
                         <Text style={styles.rejectButtonText}>{t.adminRejectReading}</Text>
                       </Pressable>
@@ -482,9 +614,211 @@ export default function AdminPanel({ language, onSignOut }: AdminPanelProps) {
         </View>
       ) : null}
 
+      {activeSection === 'rates' ? (
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>{t.adminBillingRates}</Text>
+          <View style={styles.readingTabs}>
+            {([
+              ['tariff', t.adminCreateTariff],
+              ['vat', t.adminCreateVatRate],
+            ] as const).map(([subsection, label]) => (
+              <Pressable
+                key={subsection}
+                accessibilityRole="tab"
+                accessibilityState={{ selected: rateSubsection === subsection }}
+                onPress={() => {
+                  setRateSubsection(subsection);
+                  setRateFeedback(null);
+                }}
+                style={[styles.readingTab, rateSubsection === subsection && styles.readingTabActive]}
+              >
+                <Text style={[styles.readingTabText, rateSubsection === subsection && styles.readingTabTextActive]}>{label}</Text>
+              </Pressable>
+            ))}
+          </View>
+          {rateSubsection === 'tariff' ? (
+            <View style={styles.formSection}>
+              <Text style={styles.inputLabel}>{t.adminTariffCategory}</Text>
+              <View style={styles.readingTabs}>
+                {([
+                  ['RESIDENTIAL', t.adminResidential],
+                  ['NON_RESIDENTIAL', t.adminNonResidential],
+                ] as const).map(([category, label]) => (
+                  <Pressable
+                    key={category}
+                    accessibilityRole="radio"
+                    accessibilityState={{ checked: tariffFields.category === category }}
+                    onPress={() => setTariffFields((current) => ({ ...current, category }))}
+                    style={[styles.readingTab, tariffFields.category === category && styles.readingTabActive]}
+                  >
+                    <Text style={[styles.readingTabText, tariffFields.category === category && styles.readingTabTextActive]}>{label}</Text>
+                  </Pressable>
+                ))}
+              </View>
+              <Text style={styles.inputLabel}>{t.adminTariffDescription}</Text>
+              <TextInput
+                accessibilityLabel={t.adminTariffDescription}
+                maxLength={500}
+                multiline
+                onChangeText={(description) => {
+                  setTariffFields((current) => ({ ...current, description }));
+                  setRateFeedback(null);
+                }}
+                placeholder={t.adminTariffDescription}
+                style={[styles.passwordInput, styles.descriptionInput]}
+                value={tariffFields.description}
+              />
+              <Text style={styles.inputLabel}>{t.adminRatePerM3}</Text>
+              <TextInput
+                accessibilityLabel={t.adminRatePerM3}
+                keyboardType="decimal-pad"
+                onChangeText={(ratePerM3) => {
+                  setTariffFields((current) => ({ ...current, ratePerM3 }));
+                  setRateFeedback(null);
+                }}
+                placeholder="25.5"
+                style={styles.passwordInput}
+                value={tariffFields.ratePerM3}
+              />
+              <Text style={styles.inputLabel}>{t.adminMinUnitsPerDay}</Text>
+              <TextInput
+                accessibilityLabel={t.adminMinUnitsPerDay}
+                keyboardType="decimal-pad"
+                onChangeText={(minUnitsPerDay) => {
+                  setTariffFields((current) => ({ ...current, minUnitsPerDay }));
+                  setRateFeedback(null);
+                }}
+                placeholder="1"
+                style={styles.passwordInput}
+                value={tariffFields.minUnitsPerDay}
+              />
+              <Text style={styles.inputLabel}>{t.adminEffectiveFrom}</Text>
+              <TextInput
+                accessibilityLabel={t.adminEffectiveFrom}
+                autoCapitalize="none"
+                onChangeText={(effectiveFrom) => {
+                  setTariffFields((current) => ({ ...current, effectiveFrom }));
+                  setRateFeedback(null);
+                }}
+                placeholder="YYYY-MM-DD"
+                style={styles.passwordInput}
+                value={tariffFields.effectiveFrom}
+              />
+              {rateFeedback ? (
+                <Text accessibilityRole={rateFeedback.success ? 'text' : 'alert'} style={rateFeedback.success ? styles.success : styles.error}>
+                  {rateFeedback.message}
+                </Text>
+              ) : null}
+              <Pressable
+                accessibilityRole="button"
+                disabled={rateSaving}
+                onPress={() => void submitTariff()}
+                style={[styles.saveButton, rateSaving && styles.saveButtonDisabled]}
+              >
+                <Text style={styles.saveButtonText}>{rateSaving ? t.adminSaving : t.adminCreateTariff}</Text>
+              </Pressable>
+            </View>
+          ) : (
+            <View style={styles.formSection}>
+              <Text style={styles.readerCode}>{t.adminVatInactiveNote}</Text>
+              <Text style={styles.inputLabel}>{t.adminPercentage}</Text>
+              <TextInput
+                accessibilityLabel={t.adminPercentage}
+                keyboardType="decimal-pad"
+                onChangeText={(percentage) => {
+                  setVatFields((current) => ({ ...current, percentage }));
+                  setRateFeedback(null);
+                }}
+                placeholder="15"
+                style={styles.passwordInput}
+                value={vatFields.percentage}
+              />
+              <Text style={styles.inputLabel}>{t.adminEffectiveFrom}</Text>
+              <TextInput
+                accessibilityLabel={t.adminEffectiveFrom}
+                autoCapitalize="none"
+                onChangeText={(effectiveFrom) => {
+                  setVatFields((current) => ({ ...current, effectiveFrom }));
+                  setRateFeedback(null);
+                }}
+                placeholder="YYYY-MM-DD"
+                style={styles.passwordInput}
+                value={vatFields.effectiveFrom}
+              />
+              {rateFeedback ? (
+                <Text accessibilityRole={rateFeedback.success ? 'text' : 'alert'} style={rateFeedback.success ? styles.success : styles.error}>
+                  {rateFeedback.message}
+                </Text>
+              ) : null}
+              <Pressable
+                accessibilityRole="button"
+                disabled={rateSaving}
+                onPress={() => void submitVatRate()}
+                style={[styles.saveButton, rateSaving && styles.saveButtonDisabled]}
+              >
+                <Text style={styles.saveButtonText}>{rateSaving ? t.adminSaving : t.adminCreateVatRate}</Text>
+              </Pressable>
+            </View>
+          )}
+        </View>
+      ) : null}
+
       {activeSection === 'passwords' ? (
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>{t.adminAssignInspectorPassword}</Text>
+          <View style={styles.readingTabs}>
+            {([
+              ['add-mi', t.adminCreateMiAccount],
+              ['set-password', t.adminAddMiPassword],
+            ] as const).map(([subsection, label]) => (
+              <Pressable
+                key={subsection}
+                accessibilityRole="tab"
+                accessibilityState={{ selected: passwordSubsection === subsection }}
+                onPress={() => {
+                  setPasswordSubsection(subsection);
+                  setFeedback(null);
+                  setSelectedPasswordInspector(null);
+                  setPasswordEditorOpen(false);
+                }}
+                style={[styles.readingTab, passwordSubsection === subsection && styles.readingTabActive]}
+              >
+                <Text style={[styles.readingTabText, passwordSubsection === subsection && styles.readingTabTextActive]}>{label}</Text>
+              </Pressable>
+            ))}
+          </View>
+          {passwordSubsection === 'add-mi' ? (
+            <View style={styles.formSection}>
+              <Text style={styles.sectionTitle}>{t.adminCreateMiAccount}</Text>
+              <Text style={styles.inputLabel}>{t.meterReaderCode}</Text>
+              <TextInput
+                accessibilityLabel={t.meterReaderCode}
+                autoCapitalize="characters"
+                onChangeText={(readerCode) => setNewInspector({ readerCode })}
+                placeholder={t.meterReaderCode}
+                style={styles.passwordInput}
+                value={newInspector.readerCode}
+              />
+              {newInspectorFeedback ? (
+                <Text accessibilityRole={newInspectorFeedback.success ? 'text' : 'alert'} style={newInspectorFeedback.success ? styles.success : styles.error}>
+                  {newInspectorFeedback.message}
+                </Text>
+              ) : null}
+              <Pressable
+                accessibilityRole="button"
+                disabled={newInspectorSaving}
+                onPress={() => void createInspector()}
+                style={[styles.saveButton, newInspectorSaving && styles.saveButtonDisabled]}
+              >
+                <Text style={styles.saveButtonText}>{newInspectorSaving ? t.adminSavingPassword : t.adminCreateMiAccount}</Text>
+              </Pressable>
+            </View>
+          ) : null}
+          {passwordSubsection === 'set-password' ? (
+            <View style={styles.section}>
+          {newInspectorFeedback?.success ? (
+            <Text accessibilityRole="text" style={styles.success}>{newInspectorFeedback.message}</Text>
+          ) : null}
           <Text style={styles.readerCode}>{t.adminSelectInspectorHint}</Text>
           <View style={styles.searchRow}>
             <TextInput
@@ -533,7 +867,7 @@ export default function AdminPanel({ language, onSignOut }: AdminPanelProps) {
               const selected = selectedPasswordInspector?.readerCode === inspector.readerCode;
               const fields = passwordFields[inspector.readerCode] ?? { password: '', confirmation: '' };
               const saving = savingCode === inspector.readerCode;
-              const canSave = fields.password.length >= 12 && fields.password === fields.confirmation && !saving;
+              const canSave = fields.password.length >= 8 && fields.password === fields.confirmation && !saving;
               const visible = visiblePasswordCodes[inspector.readerCode] ?? false;
               return (
                 <View key={inspector.readerCode} style={styles.inspectorPasswordItem}>
@@ -542,7 +876,7 @@ export default function AdminPanel({ language, onSignOut }: AdminPanelProps) {
                     accessibilityState={{ selected }}
                     onPress={() => {
                       setSelectedPasswordInspector(inspector);
-                      setPasswordEditorOpen(true);
+                      setPasswordEditorOpen(inspector.hasPassword === false);
                       setFeedback(null);
                     }}
                     style={[styles.card, selected && styles.cardSelected]}
@@ -550,16 +884,21 @@ export default function AdminPanel({ language, onSignOut }: AdminPanelProps) {
                     <View style={styles.identity}>
                       <Text style={styles.name}>{inspector.name || inspector.readerCode}</Text>
                       <Text style={styles.readerCode}>RICODE: {inspector.readerCode}</Text>
-                      {inspector.phoneNumber ? <Text style={styles.readerCode}>{t.adminInspectorPhone}: {inspector.phoneNumber}</Text> : null}
-                      {inspector.email ? <Text style={styles.readerCode}>{t.adminInspectorEmail}: {inspector.email}</Text> : null}
-                      <Text style={!inspector.passwordConfigured ? styles.statusDisabled : inspector.isActive ? styles.statusEnabled : styles.statusDisabled}>
-                        {!inspector.passwordConfigured ? t.adminPasswordMissing : inspector.isActive ? t.adminPasswordReady : t.adminPasswordDisabled}
+                      <Text style={styles.readerCode}>ID: {inspector.id}</Text>
+                      <Text style={inspector.hasPassword === true ? styles.passwordStatusReady : inspector.hasPassword === false ? styles.passwordStatusMissing : styles.passwordStatusUnknown}>
+                        {inspector.hasPassword === true
+                          ? t.adminPasswordReady
+                          : inspector.hasPassword === false
+                            ? t.adminPasswordMissing
+                            : t.adminPasswordStatusUnavailable}
                       </Text>
                     </View>
                   </Pressable>
                   {selected ? (
                     <View style={styles.passwordEditor}>
-                      {passwordEditorOpen ? (
+                      {inspector.hasPassword === true ? (
+                        <Text style={styles.passwordStatusReady}>{t.adminPasswordReady}</Text>
+                      ) : passwordEditorOpen ? (
                         <>
                           <Text style={styles.inputLabel}>{t.adminPasswordInput}</Text>
                           <View style={styles.passwordRow}>
@@ -576,8 +915,8 @@ export default function AdminPanel({ language, onSignOut }: AdminPanelProps) {
                             </Pressable>
                           </View>
                           <View style={styles.actionRow}>
-                            <Pressable accessibilityRole="button" disabled={!canSave} onPress={() => void savePassword(inspector.readerCode)} style={[styles.saveButton, !canSave && styles.saveButtonDisabled]}>
-                              <Text style={styles.saveButtonText}>{saving ? t.adminSavingPassword : inspector.passwordConfigured ? t.adminResetPassword : t.adminSetPassword}</Text>
+                            <Pressable accessibilityRole="button" disabled={!canSave} onPress={() => void savePassword(inspector.readerCode, inspector.id)} style={[styles.saveButton, !canSave && styles.saveButtonDisabled]}>
+                              <Text style={styles.saveButtonText}>{saving ? t.adminSavingPassword : t.adminSetPassword}</Text>
                             </Pressable>
                             <Pressable accessibilityRole="button" disabled={saving} onPress={() => { setSelectedPasswordInspector(null); setPasswordEditorOpen(false); setFeedback(null); }} style={styles.secondaryButton}>
                               <Text style={styles.secondaryButtonText}>{t.adminCancelAction}</Text>
@@ -587,7 +926,7 @@ export default function AdminPanel({ language, onSignOut }: AdminPanelProps) {
                       ) : (
                         <View style={styles.actionRow}>
                           <Pressable accessibilityRole="button" onPress={() => setPasswordEditorOpen(true)} style={styles.saveButton}>
-                            <Text style={styles.saveButtonText}>{inspector.passwordConfigured ? t.adminResetPassword : t.adminSetPassword}</Text>
+                            <Text style={styles.saveButtonText}>{t.adminSetPassword}</Text>
                           </Pressable>
                           <Pressable accessibilityRole="button" onPress={() => setSelectedPasswordInspector(null)} style={styles.secondaryButton}>
                             <Text style={styles.secondaryButtonText}>{t.adminCancelAction}</Text>
@@ -602,125 +941,15 @@ export default function AdminPanel({ language, onSignOut }: AdminPanelProps) {
             })}
             {!loading && !loadError && filteredInspectors.length === 0 ? <Text style={styles.empty}>{t.adminNoInspectors}</Text> : null}
           </View>
-        </View>
-      ) : null}
-
-      {activeSection === 'create' ? (
-        <View style={styles.formSection}>
-          <Text style={styles.sectionTitle}>{t.adminCreateMiAccount}</Text>
-          <Text style={styles.inputLabel}>{t.employeeName}</Text>
-          <TextInput accessibilityLabel={t.employeeName} placeholder={t.employeeName} value={newInspector.name} onChangeText={(name) => setNewInspector((current) => ({ ...current, name }))} style={styles.passwordInput} />
-          <Text style={styles.inputLabel}>RICODE</Text>
-          <TextInput accessibilityLabel="RICODE" placeholder="RICODE" value={newInspector.readerCode} onChangeText={(readerCode) => setNewInspector((current) => ({ ...current, readerCode }))} autoCapitalize="characters" style={styles.passwordInput} />
-          <Text style={styles.inputLabel}>{t.adminInspectorPhone}</Text>
-          <TextInput accessibilityLabel={t.adminInspectorPhone} placeholder={t.adminInspectorPhone} value={newInspector.phoneNumber} onChangeText={(phoneNumber) => setNewInspector((current) => ({ ...current, phoneNumber }))} keyboardType="phone-pad" style={styles.passwordInput} />
-          <Text style={styles.inputLabel}>{t.adminInspectorEmail}</Text>
-          <TextInput accessibilityLabel={t.adminInspectorEmail} placeholder={t.adminInspectorEmail} value={newInspector.email} onChangeText={(email) => setNewInspector((current) => ({ ...current, email }))} keyboardType="email-address" autoCapitalize="none" style={styles.passwordInput} />
-          <Text style={styles.inputLabel}>{t.adminPasswordInput}</Text>
-          <View style={styles.passwordRow}>
-            <TextInput accessibilityLabel={t.adminPasswordInput} placeholder={t.adminPasswordInput} value={newInspector.password} onChangeText={(password) => setNewInspector((current) => ({ ...current, password }))} secureTextEntry={!newInspectorVisible} style={[styles.passwordInput, styles.passwordInputFlex]} />
-            <Pressable accessibilityRole="button" accessibilityLabel={newInspectorVisible ? t.hidePassword : t.showPassword} onPress={() => setNewInspectorVisible((visible) => !visible)} style={styles.visibilityButton}>
-              <Text style={styles.visibilityIcon}>{newInspectorVisible ? '◉' : '◎'}</Text>
-            </Pressable>
-          </View>
-          <Text style={styles.inputLabel}>{t.adminConfirmPassword}</Text>
-          <TextInput accessibilityLabel={t.adminConfirmPassword} placeholder={t.adminConfirmPassword} value={newInspector.confirmation} onChangeText={(confirmation) => setNewInspector((current) => ({ ...current, confirmation }))} secureTextEntry={!newInspectorVisible} style={styles.passwordInput} />
-          {newInspectorFeedback ? <Text accessibilityRole={newInspectorFeedback.success ? 'text' : 'alert'} style={newInspectorFeedback.success ? styles.success : styles.error}>{newInspectorFeedback.message}</Text> : null}
-          <Pressable accessibilityRole="button" disabled={newInspectorSaving} onPress={() => void createInspector()} style={[styles.saveButton, newInspectorSaving && styles.saveButtonDisabled]}>
-            <Text style={styles.saveButtonText}>{newInspectorSaving ? t.adminSavingPassword : t.adminCreateMiAccount}</Text>
-          </Pressable>
+            </View>
+          ) : null}
         </View>
       ) : null}
 
       {activeSection === 'deactivate' ? (
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>{t.adminDeactivateAccount}</Text>
-          <Text style={styles.readerCode}>{t.adminSelectInspectorHint}</Text>
-          <View style={styles.searchRow}>
-            <TextInput
-              accessibilityLabel={t.adminSearchByRicCode}
-              placeholder={t.adminSearchByRicCode}
-              value={deactivationSearch}
-              onChangeText={(value) => {
-                setDeactivationSearch(value);
-                setDeactivationQuery(value.trim());
-                setSelectedDeactivationInspector(null);
-                setDeactivationFeedback(null);
-              }}
-              onSubmitEditing={() => {
-                setDeactivationQuery(deactivationSearch.trim());
-                setSelectedDeactivationInspector(null);
-                setDeactivationFeedback(null);
-              }}
-              style={[styles.searchInput, styles.searchInputFlex]}
-              returnKeyType="search"
-            />
-            <Pressable accessibilityRole="button" accessibilityLabel={t.search} onPress={() => {
-              setDeactivationQuery(deactivationSearch.trim());
-              setSelectedDeactivationInspector(null);
-              setDeactivationFeedback(null);
-            }} style={styles.searchButton}>
-              <Text style={styles.searchButtonText}>{t.search}</Text>
-            </Pressable>
-            {deactivationSearch || deactivationQuery ? (
-              <Pressable accessibilityRole="button" accessibilityLabel={t.adminClearSearch} onPress={() => {
-                setDeactivationSearch('');
-                setDeactivationQuery('');
-                setSelectedDeactivationInspector(null);
-                setDeactivationFeedback(null);
-              }} style={styles.clearSearchButton}>
-                <Text style={styles.clearSearchText}>{t.adminClearSearch}</Text>
-              </Pressable>
-            ) : null}
-          </View>
-          {loading ? <View style={styles.status}><ActivityIndicator /><Text style={styles.statusText}>{t.adminLoadingInspectors}</Text></View> : null}
-          <View style={styles.deactivationResults}>
-            {filteredDeactivationInspectors.map((inspector) => {
-              const selected = selectedDeactivationInspector?.readerCode === inspector.readerCode;
-              const canDeactivate = inspector.passwordConfigured && inspector.isActive;
-              return (
-                <View key={inspector.readerCode} style={styles.deactivationItem}>
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityState={{ selected }}
-                    onPress={() => {
-                      setSelectedDeactivationInspector(inspector);
-                      setDeactivationFeedback(null);
-                    }}
-                    style={[styles.deactivationResult, selected && styles.cardSelected]}
-                  >
-                    <Text style={styles.name}>{inspector.name || inspector.readerCode}</Text>
-                    <Text style={styles.readerCode}>RICODE: {inspector.readerCode}</Text>
-                    <Text style={!inspector.passwordConfigured ? styles.statusDisabled : inspector.isActive ? styles.statusEnabled : styles.statusDisabled}>
-                      {!inspector.passwordConfigured ? t.adminPasswordMissing : inspector.isActive ? t.adminPasswordReady : t.adminPasswordDisabled}
-                    </Text>
-                  </Pressable>
-                  {selected ? (
-                    <View style={styles.deactivationActions}>
-                      {inspector.phoneNumber ? <Text style={styles.readerCode}>{t.adminInspectorPhone}: {inspector.phoneNumber}</Text> : null}
-                      {inspector.email ? <Text style={styles.readerCode}>{t.adminInspectorEmail}: {inspector.email}</Text> : null}
-                      {!canDeactivate ? <Text style={styles.statusDisabled}>{t.adminNoActiveInspectorAccount}</Text> : null}
-                      <View style={styles.actionRow}>
-                        <Pressable accessibilityRole="button" onPress={() => setSelectedDeactivationInspector(null)} style={styles.secondaryButton}>
-                          <Text style={styles.secondaryButtonText}>{t.adminCancelAction}</Text>
-                        </Pressable>
-                        <Pressable
-                          accessibilityRole="button"
-                          disabled={!canDeactivate}
-                          onPress={() => setDeactivationTarget(inspector)}
-                          style={[styles.rejectButton, !canDeactivate && styles.saveButtonDisabled]}
-                        >
-                          <Text style={styles.rejectButtonText}>{t.adminDeactivateAccount}</Text>
-                        </Pressable>
-                      </View>
-                    </View>
-                  ) : null}
-                </View>
-              );
-            })}
-            {!loading && !loadError && filteredDeactivationInspectors.length === 0 ? <Text style={styles.empty}>{t.adminNoInspectors}</Text> : null}
-          </View>
-          {deactivationFeedback ? <Text accessibilityRole={deactivationFeedback.success ? 'text' : 'alert'} style={deactivationFeedback.success ? styles.success : styles.error}>{deactivationFeedback.message}</Text> : null}
+          <Text accessibilityRole="alert" style={styles.error}>{t.adminDeactivationUnavailable}</Text>
         </View>
       ) : null}
 
@@ -742,20 +971,26 @@ export default function AdminPanel({ language, onSignOut }: AdminPanelProps) {
                     <Text style={styles.modalCloseText}>×</Text>
                   </Pressable>
                 </View>
-                <Text style={styles.name}>{readingDetails.customerName}</Text>
-                <Text style={styles.readerCode}>RICODE: {readingDetails.readerCode}</Text>
-                <Text style={styles.readerCode}>{t.accountNumber}: {readingDetails.accountNo}</Text>
+                <Text style={styles.name}>{t.adminCustomerId}: {readingDetails.customerId}</Text>
+                <Text style={styles.readerCode}>{t.adminMeterReaderName}: {readingDetails.meterReader.name} · RICODE: {readingDetails.meterReader.readerCode}</Text>
                 <Text style={styles.readerCode}>{t.meter}: {readingDetails.meterNo || '—'}</Text>
-                <Text style={styles.readerCode}>{t.ward}: {readingDetails.wardNo || '—'}</Text>
-                <Text style={styles.readerCode}>{t.currentBill}: ৳{Number(readingDetails.currentBill).toLocaleString('en-US', { minimumFractionDigits: 2 })}</Text>
+                <Text style={styles.readerCode}>{t.adminReadingAddress}: {readingDetails.addressSnapshot}</Text>
+                <Text style={styles.readerCode}>{t.previousReading}: {readingDetails.previousReading}</Text>
+                <Text style={styles.readerCode}>{t.currentReading}: {readingDetails.currentReading}</Text>
                 <Text style={styles.readerCode}>GPS: {readingDetails.latitude}, {readingDetails.longitude}</Text>
-                <Text style={styles.readerCode}>{new Date(readingDetails.createdAt).toLocaleString()}</Text>
-                <Text style={styles.readerCode}>{readingDetails.status}</Text>
-                {readingDetails.photoBase64 ? <Image accessibilityLabel={`${t.meterPhotoLabel} for ${readingDetails.customerName}`} source={{ uri: `data:image/jpeg;base64,${readingDetails.photoBase64}` }} style={styles.readingPhoto} resizeMode="contain" /> : <Text style={styles.statusDisabled}>{t.adminReadingPhotoMissing}</Text>}
-                {readingDetails.status === 'Pending' ? (
+                <Text style={styles.readerCode}>{new Date(readingDetails.readingDate).toLocaleString()}</Text>
+                <Text style={styles.readerCode}>
+                  {readingDetails.status === 'APPROVED'
+                    ? t.adminApprovedReadings
+                    : readingDetails.status === 'REJECTED'
+                      ? t.adminRejectedReadings
+                      : t.adminPendingReadings}
+                </Text>
+                {readingDetails.image ? <Image accessibilityLabel={`${t.meterPhotoLabel} for ${readingDetails.meterReader.name}`} source={{ uri: readingDetails.image }} style={styles.readingPhoto} resizeMode="contain" /> : <Text style={styles.statusDisabled}>{t.adminReadingPhotoMissing}</Text>}
+                {readingDetails.status === null || readingDetails.status === 'PENDING' ? (
                   <View style={styles.actionRow}>
                     <Pressable accessibilityRole="button" onPress={() => void approveReading(readingDetails.id)} style={styles.saveButton}><Text style={styles.saveButtonText}>{t.adminApproveReading}</Text></Pressable>
-                    <Pressable accessibilityRole="button" onPress={() => void rejectReading(readingDetails.id)} style={styles.rejectButton}><Text style={styles.rejectButtonText}>{t.adminRejectReading}</Text></Pressable>
+                    <Pressable accessibilityRole="button" onPress={() => requestRejection([readingDetails.id])} style={styles.rejectButton}><Text style={styles.rejectButtonText}>{t.adminRejectReading}</Text></Pressable>
                   </View>
                 ) : null}
               </ScrollView>
@@ -764,17 +999,91 @@ export default function AdminPanel({ language, onSignOut }: AdminPanelProps) {
         </View>
       </Modal>
 
-      <Modal transparent visible={deactivationTarget !== null} animationType="fade" onRequestClose={() => setDeactivationTarget(null)}>
+      <Modal
+        transparent
+        visible={approvalTargetIds.length > 0}
+        animationType="fade"
+        onRequestClose={() => {
+          if (!approvalSaving) setApprovalTargetIds([]);
+        }}
+      >
         <View style={styles.modalOverlay}>
-          <Pressable accessibilityLabel={t.adminCancelAction} disabled={deactivating} onPress={() => setDeactivationTarget(null)} style={styles.modalScrim} />
+          <Pressable
+            accessibilityLabel={t.adminCancelAction}
+            disabled={approvalSaving}
+            onPress={() => setApprovalTargetIds([])}
+            style={styles.modalScrim}
+          />
           <View style={styles.confirmModal}>
-            <Text style={styles.reviewTitle}>{t.adminDeactivateAccount}</Text>
-            <Text style={styles.subtitle}>{t.adminDeactivateConfirmation}</Text>
-            <Text style={styles.name}>{deactivationTarget?.name} · {deactivationTarget?.readerCode}</Text>
-            {deactivationFeedback && !deactivationFeedback.success ? <Text accessibilityRole="alert" style={styles.error}>{deactivationFeedback.message}</Text> : null}
+            <Text style={styles.reviewTitle}>{t.adminApproveReading}</Text>
+            <Text style={styles.subtitle}>
+              {approvalTargetIds.length > 1
+                ? `${approvalTargetIds.length} ${t.adminSelectedCount}`
+                : t.adminBillDatesPrompt}
+            </Text>
+            <Text style={styles.inputLabel}>{t.adminBillIssueDate}</Text>
+            <TextInput
+              accessibilityLabel={t.adminBillIssueDate}
+              autoCapitalize="none"
+              editable={!approvalSaving}
+              onChangeText={setBillIssueDate}
+              placeholder="YYYY-MM-DD"
+              style={styles.passwordInput}
+              value={billIssueDate}
+            />
+            <Text style={styles.inputLabel}>{t.adminBillDueDate}</Text>
+            <TextInput
+              accessibilityLabel={t.adminBillDueDate}
+              autoCapitalize="none"
+              editable={!approvalSaving}
+              onChangeText={setBillDueDate}
+              placeholder="YYYY-MM-DD"
+              style={styles.passwordInput}
+              value={billDueDate}
+            />
+            {approvalError ? <Text accessibilityRole="alert" style={styles.error}>{approvalError}</Text> : null}
             <View style={styles.actionRow}>
-              <Pressable accessibilityRole="button" disabled={deactivating} onPress={() => setDeactivationTarget(null)} style={styles.secondaryButton}><Text style={styles.secondaryButtonText}>{t.adminCancelAction}</Text></Pressable>
-              <Pressable accessibilityRole="button" disabled={deactivating} onPress={() => void deactivateInspector()} style={[styles.rejectButton, deactivating && styles.saveButtonDisabled]}><Text style={styles.rejectButtonText}>{deactivating ? t.adminDeactivatingAccount : t.adminDeactivateAccount}</Text></Pressable>
+              <Pressable
+                accessibilityRole="button"
+                disabled={approvalSaving}
+                onPress={() => setApprovalTargetIds([])}
+                style={styles.secondaryButton}
+              >
+                <Text style={styles.secondaryButtonText}>{t.adminCancelAction}</Text>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                disabled={approvalSaving}
+                onPress={() => void confirmApproval()}
+                style={[styles.saveButton, approvalSaving && styles.saveButtonDisabled]}
+              >
+                <Text style={styles.saveButtonText}>
+                  {approvalSaving ? t.adminApprovingReading : t.adminConfirmAction}
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal transparent visible={rejectionTargetIds.length > 0} animationType="fade" onRequestClose={() => setRejectionTargetIds([])}>
+        <View style={styles.modalOverlay}>
+          <Pressable accessibilityLabel={t.adminCancelAction} disabled={rejectionSaving} onPress={() => setRejectionTargetIds([])} style={styles.modalScrim} />
+          <View style={styles.confirmModal}>
+            <Text style={styles.reviewTitle}>{t.adminRejectReading}</Text>
+            <Text style={styles.subtitle}>{t.adminRejectReasonPrompt}</Text>
+            <TextInput
+              accessibilityLabel={t.adminRejectReasonPrompt}
+              maxLength={500}
+              multiline
+              onChangeText={setRejectReason}
+              placeholder={t.adminRejectReasonPrompt}
+              style={[styles.passwordInput, styles.rejectReasonInput]}
+              value={rejectReason}
+            />
+            <View style={styles.actionRow}>
+              <Pressable accessibilityRole="button" disabled={rejectionSaving} onPress={() => setRejectionTargetIds([])} style={styles.secondaryButton}><Text style={styles.secondaryButtonText}>{t.adminCancelAction}</Text></Pressable>
+              <Pressable accessibilityRole="button" disabled={!rejectReason.trim() || rejectionSaving} onPress={() => void confirmRejection()} style={[styles.rejectButton, (!rejectReason.trim() || rejectionSaving) && styles.saveButtonDisabled]}><Text style={styles.rejectButtonText}>{rejectionSaving ? t.adminSaving : t.adminRejectReading}</Text></Pressable>
             </View>
           </View>
         </View>
@@ -787,14 +1096,14 @@ const styles = StyleSheet.create({
   page: {
     flex: 1,
     minHeight: 0,
-    backgroundColor: '#F4F6FB',
+    backgroundColor: 'rgb(255, 255, 255)',
     padding: 16,
     gap: 12,
   },
   header: {
-    backgroundColor: '#FFFFFF',
-    borderColor: '#DDE3EF',
-    borderLeftColor: '#086f83',
+    backgroundColor: '#006BD9',
+    borderColor: '#006BD9',
+    borderLeftColor: '#FFC809',
     borderLeftWidth: 4,
     borderRadius: 10,
     borderWidth: 1,
@@ -811,12 +1120,12 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   title: {
-    color: '#151434',
+    color: '#FFFFFF',
     fontSize: 23,
     fontWeight: '700',
   },
   subtitle: {
-    color: '#5B6275',
+    color: '#FFFFFF',
     fontSize: 14,
   },
   headerActions: {
@@ -825,33 +1134,37 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   secondaryButton: {
-    borderColor: '#b9c9d7',
+    backgroundColor: '#FFC809',
+    borderColor: '#FFC809',
     borderRadius: 8,
     borderWidth: 1,
     paddingHorizontal: 12,
     paddingVertical: 10,
   },
   secondaryButtonText: {
-    color: '#18324b',
+    color: '#151435',
     fontWeight: '600',
   },
-  signOutButton: {
-    backgroundColor: '#eaf0f5',
+  menuButton: {
+    width: 42,
+    height: 42,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFC809',
     borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
   },
-  signOutText: {
-    color: '#18324b',
-    fontWeight: '600',
+  menuButtonText: {
+    color: '#151435',
+    fontSize: 24,
+    fontWeight: '700',
   },
   list: {
     gap: 12,
     paddingBottom: 24,
   },
   reviewSection: {
-    backgroundColor: '#edf4f7',
-    borderColor: '#d5e2e8',
+    backgroundColor: '#F8F0E4',
+    borderColor: '#006BD9',
     borderRadius: 12,
     borderWidth: 1,
     gap: 12,
@@ -864,13 +1177,13 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   reviewTitle: {
-    color: '#18324b',
+    color: '#151435',
     fontSize: 18,
     fontWeight: '700',
   },
   readingCard: {
-    backgroundColor: '#fff',
-    borderColor: '#dfe7ee',
+    backgroundColor: '#ffffff',
+    borderColor: '#006BD9',
     borderRadius: 10,
     borderWidth: 1,
     gap: 10,
@@ -881,14 +1194,14 @@ const styles = StyleSheet.create({
   },
   readingPhoto: {
     alignSelf: 'flex-start',
-    backgroundColor: '#f4f7fb',
+    backgroundColor: '#F8F0E4',
     borderRadius: 8,
     height: 160,
     width: '100%',
   },
   card: {
-    backgroundColor: '#fff',
-    borderColor: '#dfe7ee',
+    backgroundColor: '#FFFFFF',
+    borderColor: '#006BD9',
     borderRadius: 12,
     borderWidth: 1,
     gap: 10,
@@ -899,51 +1212,96 @@ const styles = StyleSheet.create({
     marginBottom: 2,
   },
   name: {
-    color: '#18324b',
+    color: '#151435',
     fontSize: 17,
     fontWeight: '700',
   },
   readerCode: {
-    color: '#607488',
+    color: '#151435',
     fontSize: 13,
   },
   statusEnabled: {
-    color: '#157347',
+    color: '#006BD9',
     fontSize: 13,
     fontWeight: '600',
   },
   statusDisabled: {
-    color: '#9a5b00',
+    color: '#151435',
     fontSize: 13,
     fontWeight: '600',
   },
+  passwordStatusReady: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#006BD9',
+    borderRadius: 12,
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
+    overflow: 'hidden',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  passwordStatusMissing: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#D6FF00',
+    borderRadius: 12,
+    color: '#151435',
+    fontSize: 12,
+    fontWeight: '700',
+    overflow: 'hidden',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  passwordStatusUnknown: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#F8F0E4',
+    borderColor: '#006BD9',
+    borderRadius: 12,
+    borderWidth: 1,
+    color: '#151435',
+    fontSize: 12,
+    fontWeight: '700',
+    overflow: 'hidden',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
   passwordInput: {
-    backgroundColor: '#fff',
-    borderColor: '#d7e0e8',
+    backgroundColor: '#FFFFFF',
+    borderColor: '#006BD9',
     borderRadius: 8,
     borderWidth: 1,
-    color: '#18324b',
+    color: '#151435',
+    fontFamily: 'Open Sans',
     minHeight: 44,
     paddingHorizontal: 12,
   },
+  rejectReasonInput: {
+    minHeight: 100,
+    textAlignVertical: 'top',
+  },
+  descriptionInput: {
+    minHeight: 88,
+    paddingTop: 10,
+    textAlignVertical: 'top',
+  },
   inputLabel: {
-    color: '#365368',
+    color: '#151435',
     fontSize: 13,
     fontWeight: '600',
   },
   saveButton: {
     alignItems: 'center',
-    backgroundColor: '#086f83',
+    backgroundColor: '#006BD9',
     borderRadius: 8,
     minHeight: 44,
     justifyContent: 'center',
     paddingHorizontal: 14,
   },
   saveButtonDisabled: {
-    backgroundColor: '#96aab5',
+    backgroundColor: '#006BD9',
   },
   saveButtonText: {
-    color: '#fff',
+    color: '#FFFFFF',
     fontWeight: '700',
   },
   status: {
@@ -952,18 +1310,18 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   statusText: {
-    color: '#607488',
+    color: '#151435',
   },
   error: {
-    color: '#b42318',
+    color: '#151435',
     fontSize: 13,
   },
   success: {
-    color: '#157347',
+    color: '#006BD9',
     fontSize: 13,
   },
   empty: {
-    color: '#607488',
+    color: '#151435',
     paddingVertical: 20,
     textAlign: 'center',
   },
@@ -976,7 +1334,8 @@ const styles = StyleSheet.create({
   },
   navigationItem: {
     alignItems: 'center',
-    borderColor: '#cbd7e0',
+    backgroundColor: '#F8F0E4',
+    borderColor: '#006BD9',
     borderRadius: 8,
     borderWidth: 1,
     flexBasis: 135,
@@ -987,16 +1346,16 @@ const styles = StyleSheet.create({
     paddingVertical: 7,
   },
   navigationItemActive: {
-    backgroundColor: '#E7F1FE',
-    borderColor: '#006AD8',
+    backgroundColor: '#006BD9',
+    borderColor: '#006BD9',
   },
   navigationText: {
-    color: '#52697a',
+    color: '#151435',
     fontWeight: '600',
     textAlign: 'center',
   },
   navigationTextActive: {
-    color: '#0058B6',
+    color: '#FFFFFF',
   },
   overviewGrid: {
     flexDirection: 'row',
@@ -1005,8 +1364,8 @@ const styles = StyleSheet.create({
     paddingBottom: 24,
   },
   overviewCard: {
-    backgroundColor: '#fff',
-    borderColor: '#dfe7ee',
+    backgroundColor: '#F8F0E4',
+    borderColor: '#006BD9',
     borderRadius: 10,
     borderWidth: 1,
     flexBasis: 220,
@@ -1015,12 +1374,12 @@ const styles = StyleSheet.create({
     padding: 18,
   },
   overviewCount: {
-    color: '#086f83',
+    color: '#006BD9',
     fontSize: 25,
     fontWeight: '700',
   },
   overviewLabel: {
-    color: '#365368',
+    color: '#0f0d35',
     fontWeight: '600',
   },
   section: {
@@ -1037,7 +1396,7 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
   },
   sectionTitle: {
-    color: '#18324b',
+    color: '#151435',
     fontSize: 19,
     fontWeight: '700',
     marginBottom: 4,
@@ -1048,27 +1407,27 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   readingTab: {
-    backgroundColor: '#fff',
-    borderColor: '#cbd7e0',
+    backgroundColor: '#F8F0E4',
+    borderColor: '#006BD9',
     borderRadius: 8,
     borderWidth: 1,
     paddingHorizontal: 12,
     paddingVertical: 9,
   },
   readingTabActive: {
-    backgroundColor: '#e7f1f4',
-    borderColor: '#086f83',
+    backgroundColor: '#006BD9',
+    borderColor: '#006BD9',
   },
   readingTabText: {
-    color: '#52697a',
+    color: '#151435',
     fontWeight: '600',
   },
   readingTabTextActive: {
-    color: '#086f83',
+    color: '#FFFFFF',
   },
   bulkToolbar: {
     alignItems: 'center',
-    backgroundColor: '#edf4f7',
+    backgroundColor: '#F8F0E4',
     borderRadius: 8,
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -1081,7 +1440,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
   },
   selectAllText: {
-    color: '#365368',
+    color: '#151435',
     fontWeight: '600',
   },
   readingList: {
@@ -1100,7 +1459,7 @@ const styles = StyleSheet.create({
     minWidth: 40,
   },
   readingCheckboxText: {
-    color: '#086f83',
+    color: '#006BD9',
     fontSize: 20,
   },
   readingSummary: {
@@ -1117,22 +1476,23 @@ const styles = StyleSheet.create({
   },
   rejectButton: {
     alignItems: 'center',
-    backgroundColor: '#b42318',
+    backgroundColor: '#D14200',
     borderRadius: 8,
     justifyContent: 'center',
     minHeight: 44,
     paddingHorizontal: 14,
   },
   rejectButtonText: {
-    color: '#fff',
+    color: '#FFFFFF',
     fontWeight: '700',
   },
   searchInput: {
-    backgroundColor: '#fff',
-    borderColor: '#d7e0e8',
+    backgroundColor: '#FFFFFF',
+    borderColor: '#006BD9',
     borderRadius: 8,
     borderWidth: 1,
-    color: '#18324b',
+    color: '#151435',
+    fontFamily: 'Open Sans',
     minHeight: 44,
     paddingHorizontal: 12,
   },
@@ -1148,14 +1508,14 @@ const styles = StyleSheet.create({
   },
   searchButton: {
     alignItems: 'center',
-    backgroundColor: '#0058B6',
+    backgroundColor: '#006BD9',
     borderRadius: 8,
     justifyContent: 'center',
     minHeight: 44,
     paddingHorizontal: 16,
   },
   searchButtonText: {
-    color: '#fff',
+    color: '#FFFFFF',
     fontWeight: '700',
   },
   clearSearchButton: {
@@ -1165,15 +1525,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
   },
   clearSearchText: {
-    color: '#0058B6',
+    color: '#006BD9',
     fontWeight: '600',
   },
   inspectorPasswordItem: {
     gap: 8,
   },
   passwordEditor: {
-    backgroundColor: '#f7fafd',
-    borderColor: '#dfe7ee',
+    backgroundColor: '#F8F0E4',
+    borderColor: '#006BD9',
     borderRadius: 8,
     borderWidth: 1,
     gap: 10,
@@ -1199,16 +1559,16 @@ const styles = StyleSheet.create({
     width: 44,
   },
   visibilityIcon: {
-    color: '#365368',
+    color: '#151435',
     fontSize: 20,
   },
   cardSelected: {
-    borderColor: '#086f83',
+    borderColor: '#D6FF00',
     borderWidth: 2,
   },
   deactivationActions: {
-    backgroundColor: '#fff',
-    borderColor: '#dfe7ee',
+    backgroundColor: '#FFFFFF',
+    borderColor: '#006BD9',
     borderRadius: 8,
     borderWidth: 1,
     gap: 10,
@@ -1221,8 +1581,8 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   deactivationResult: {
-    backgroundColor: '#fff',
-    borderColor: '#dfe7ee',
+    backgroundColor: '#FFFFFF',
+    borderColor: '#006BD9',
     borderRadius: 8,
     borderWidth: 1,
     gap: 4,
@@ -1234,7 +1594,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   modalScrim: {
-    backgroundColor: 'rgba(14,20,48,0.52)',
+    backgroundColor: 'rgba(21,20,53,0.52)',
     bottom: 0,
     left: 0,
     position: 'absolute',
@@ -1242,7 +1602,7 @@ const styles = StyleSheet.create({
     top: 0,
   },
   detailModal: {
-    backgroundColor: '#fff',
+    backgroundColor: '#FFFFFF',
     borderRadius: 12,
     maxHeight: '90%',
     maxWidth: 620,
@@ -1259,14 +1619,14 @@ const styles = StyleSheet.create({
   },
   modalClose: {
     alignItems: 'center',
-    backgroundColor: '#edf2f5',
+    backgroundColor: '#F8F0E4',
     borderRadius: 18,
     height: 36,
     justifyContent: 'center',
     width: 36,
   },
   modalCloseText: {
-    color: '#365368',
+    color: '#151435',
     fontSize: 22,
   },
   actionRow: {
@@ -1277,7 +1637,7 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   confirmModal: {
-    backgroundColor: '#fff',
+    backgroundColor: '#FFFFFF',
     borderRadius: 12,
     gap: 14,
     maxWidth: 440,
@@ -1294,7 +1654,7 @@ const styles = StyleSheet.create({
     paddingBottom: 8,
   },
   adminFooter: {
-    borderTopColor: '#DDE3EF',
+    borderTopColor: '#006BD9',
     borderTopWidth: 1,
     gap: 3,
     marginTop: 2,
@@ -1302,13 +1662,13 @@ const styles = StyleSheet.create({
     paddingBottom: 2,
   },
   adminFooterAccent: {
-    backgroundColor: '#006AD8',
+    backgroundColor: '#006BD9',
     borderRadius: 2,
     height: 2,
     width: 32,
   },
   adminFooterText: {
-    color: '#607488',
+    color: '#151435',
     fontSize: 10,
   },
 });

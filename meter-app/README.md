@@ -39,7 +39,7 @@ Stop and remove the container with:
 docker compose down
 ```
 
-The Docker image builds the static Expo web export and serves it with Nginx. It does not run the iOS/Android app or a backend. The Meter Reading screen lists the signed-in inspector's submitted readings awaiting administrator review; the Completed screen lists that inspector's approved readings. Administrators can review and approve submissions from the admin panel.
+The Docker image builds the static Expo web export and serves it with Nginx. It does not run the iOS/Android app or a backend. For meter readers, the ☰ menu's **Workspace → Meter Reading** item opens the dashboard, with Pending and Completed readings. The dashboard refreshes its reading lists every 30 seconds while open. Administrators can review and approve submissions from the admin panel.
 
 The browser camera needs camera permission and a secure context. `http://localhost:8080` is treated as secure for local development; when opening the app from another device or deploying it, serve it over HTTPS for camera access.
 
@@ -82,6 +82,36 @@ npx expo start --android
 ```
 
 ## Connect the standalone backend
+
+The current frontend integration targets
+`https://elusive-regional-harvey.ngrok-free.dev/api/v1`. It uses the documented
+meter-reader login, account lookup, and multipart meter-reading submission
+endpoints. Meter-reading submissions include the billing month and year.
+Administrators approve readings through the documented approval endpoint with
+bill issue and due dates, or reject them through the rejection endpoint with a
+reason of up to 500 characters. The API contract is published at
+[Swagger UI](https://elusive-regional-harvey.ngrok-free.dev/api/docs).
+Meter-reader Pending readings use the reader-scoped,
+cursor-paginated `GET /meter-reading-data/meter-reader?status=PENDING`
+endpoint. The general `GET /meter-reading-data` endpoint is used by the Admin
+Panel. The Completed list uses approved results from `GET /bill/meter-reader`,
+which the contract describes as returning bills associated with the
+authenticated meter reader, and displays
+the approved bill calculation, including consumption, tariff, charges, VAT,
+and total due. This is a temporary ngrok address; replace
+`EXPO_PUBLIC_API_BASE_URL` in `.env` with the backend's stable HTTPS base URL
+when one is available. The Swagger contract currently does not include the
+service-request endpoints. The admin panel uses
+the documented meter-reader list and password-setting routes; meter-reader
+search includes the meter ID, RICODE, and name. The Assign MI Password tab has
+separate Add MI and Add MI Password subsections. Password assignment is only
+blocked after a password is successfully set in the current session. The API
+does not report password status for existing MIs, so the backend must enforce
+whether a password can be assigned without replacing an existing one.
+The Billing Rates section creates residential or non-residential tariffs and
+VAT rates via the documented admin endpoints. Enter effective dates as
+`YYYY-MM-DD`; dates before today are rejected. VAT rates are created inactive
+by the backend.
 
 The NestJS API is in the sibling `../backend` folder and runs separately from
 this Expo app. Configure the backend separately using

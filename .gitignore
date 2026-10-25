@@ -7,11 +7,7 @@
 **/*.tsbuildinfo
 
 # Local configuration and secrets
-.env
-.env.*
 !.env.example
-**/.env
-**/.env.*
 !**/.env.example
 
 # Local data and generated native project
@@ -21,3 +17,4 @@
 
 # Temporary nested Git metadata used while creating the combined repository
 /meter-app/.nested-git-backup/
+config.bat

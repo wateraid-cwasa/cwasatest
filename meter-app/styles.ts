@@ -65,7 +65,7 @@ export const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    justifyContent: 'flex-start',
     gap: 16,
   },
   webTopBarCompact: {
@@ -89,6 +89,9 @@ export const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: 8,
+  },
+  pageHeaderButtonRight: {
+    marginLeft: 'auto',
   },
   pageHeaderButtonWeb: {
     borderWidth: 1,
@@ -735,10 +738,31 @@ export const styles = StyleSheet.create({
     fontSize: 20,
     textAlign: 'center',
   },
+  accountMenuProfileIcon: {
+    width: 24,
+    height: 24,
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 2,
+  },
+  accountMenuProfileHead: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#006AD8',
+  },
+  accountMenuProfileBody: {
+    width: 16,
+    height: 8,
+    borderTopLeftRadius: 8,
+    borderTopRightRadius: 8,
+    backgroundColor: '#006AD8',
+  },
   accountMenuIconLogout: {
     width: 24,
     color: '#D62828',
-    fontSize: 21,
+    fontSize: 24,
+    fontWeight: '700',
     textAlign: 'center',
   },
   accountMenuText: {
@@ -761,20 +785,8 @@ export const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    gap: 8,
+    gap: 5,
     paddingHorizontal: 8,
-  },
-  accountLanguageButton: {
-    borderWidth: 1,
-    borderColor: '#CBD3E3',
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-  },
-  accountLanguageButtonText: {
-    color: '#006AD8',
-    fontFamily: 'Open Sans Bold',
-    fontSize: 12,
   },
   accountDrawerSpacer: {
     flex: 1,
@@ -869,7 +881,7 @@ export const styles = StyleSheet.create({
     flexGrow: 1,
   },
   webAuthFooterSpace: {
-    paddingBottom: 64,
+    paddingBottom: 10,
   },
   signInMessage: {
     color: '#D62828',
@@ -935,38 +947,68 @@ export const styles = StyleSheet.create({
     alignItems: 'flex-end',
     marginBottom: 8,
   },
-  langButton: {
-    borderWidth: 1,
-    borderColor: '#CBD3E3',
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    minHeight: 44,
-    justifyContent: 'center',
+  segmentedControl: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'center',
+    padding: 4,
+    borderRadius: 24,
+    backgroundColor: '#006BD9',
   },
-  langButtonText: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#006AD8',
+  languageControl: {
+    width: 100,
+    alignSelf: 'flex-end',
+  },
+  drawerLanguageControl: {
+    width: 120,
+  },
+  signInRoleControl: {
+    width: 170,
+    alignSelf: 'center',
+    marginBottom: 18,
+  },
+  segmentedControlOption: {
+    flex: 1,
+    minHeight: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+    borderRadius: 20,
+  },
+  segmentedControlOptionSelected: {
+    backgroundColor: '#fff',
+  },
+  segmentedControlText: {
+    color: '#fff',
+    fontSize: 11,
     fontFamily: 'Open Sans Bold',
   },
+  segmentedControlLangText: {
+    color: '#fff',
+    fontSize: 10,
+    fontFamily: 'Open Sans Bold',
+  },
+  segmentedControlTextSelected: {
+    color: '#006BD9',
+  },
   signInLogo: {
-    width: 140,
-    height: 140,
+    width: 180,
+    height: 180,
     alignSelf: 'center',
     marginBottom: 8,
   },
   signInLogoCompact: {
-    width: 104,
-    height: 104,
+    width: 150,
+    height: 150,
     marginBottom: 4,
   },
   signInHeading: {
     fontSize: 26,
-    marginBottom: 8,
+    marginBottom: 20,
+    alignSelf: 'center',
   },
   signInHeadingCompact: {
-    marginBottom: 4,
+    marginBottom: 20,
   },
   signInFieldBlockCompact: {
     marginBottom: 10,
@@ -1007,46 +1049,57 @@ export const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   passwordEye: {
-    width: 21,
+    width: 24, // Slightly wider for a natural aspect ratio
     height: 14,
     borderWidth: 1.5,
     borderColor: '#5B6275',
-    borderRadius: 12,
+    // Realistic almond shape using mismatched border radiuses:
+    borderTopLeftRadius: 14,
+    borderBottomRightRadius: 14,
+    borderTopRightRadius: 2, 
+    borderBottomLeftRadius: 2,
     alignItems: 'center',
     justifyContent: 'center',
     overflow: 'hidden',
+    transform: [{ rotate: '20deg' }], // Tilts the shape back to horizontal
   },
   passwordEyePupil: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
     backgroundColor: '#5B6275',
+    // Counter-rotate the pupil so it doesn't skew with the parent container
+    transform: [{ rotate: '-45deg' }], 
   },
   passwordEyeSlash: {
     position: 'absolute',
-    width: 25,
+    width: 28,
     height: 1.5,
     backgroundColor: '#5B6275',
-    transform: [{ rotate: '-35deg' }],
+    // Adjusted rotation to look right against the new eye angle
+    transform: [{ rotate: '-10deg' }], 
+    zIndex: 1, // Ensures the slash stays on top
   },
+
   flexSpacer: {
     flex: 1,
   },
   primaryButton: {
     height: 56,
-    borderRadius: 12,
+    paddingBottom: 4,
+    borderRadius: 16,
     backgroundColor: '#006AD8',
     justifyContent: 'center',
     alignItems: 'center',
   },
   primaryButtonText: {
     color: '#fff',
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: '700',
     fontFamily: 'Open Sans Bold',
   },
   topBar: {
-    minHeight: 62,
+    minHeight: 50,
     backgroundColor: '#0058B6',
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -2403,6 +2456,9 @@ export const styles = StyleSheet.create({
     justifyContent: 'center',
     alignSelf: 'flex-start',
   },
+  newReadingLookupButton: {
+    marginTop: 8,
+  },
   newReadingLocationButtonText: {
     color: '#fff',
     fontSize: 13,
@@ -2558,18 +2614,18 @@ export const styles = StyleSheet.create({
     fontWeight: '700',
   },
   webPageFooterSpace: {
-    paddingBottom: 120,
+    paddingBottom: 60,
   },
   webPageFooter: {
-    marginTop: 48,
-    paddingTop: 18,
-    paddingBottom: 32,
+    marginTop: 20,
+    paddingTop: 20,
+    paddingBottom: 0,
     width: '100%',
   },
   webPageFooterDivider: {
     height: 1,
     backgroundColor: '#E5EAF2',
-    marginBottom: 16,
+    marginBottom: 12,
     width: '100%',
   },
   webPageFooterRow: {
